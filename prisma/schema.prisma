@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model coach {
+  Train_no    Int
+  Coach_no    Int
+  Coach_class String @db.VarChar(50)
+  train       train  @relation(fields: [Train_no], references: [Train_no], onDelete: NoAction, onUpdate: NoAction, map: "coach_ibfk_1")
+  seat        seat[]
+
+  @@id([Train_no, Coach_no, Coach_class])
+}
+
+model goesto {
+  Train_no       Int
+  Station_name   String   @db.VarChar(100)
+  Arrival_time   DateTime @db.Time(0)
+  Departure_time DateTime @db.Time(0)
+  train          train    @relation(fields: [Train_no], references: [Train_no], onDelete: NoAction, onUpdate: NoAction, map: "goesto_ibfk_1")
+  station        station  @relation(fields: [Station_name], references: [Station_name], onDelete: NoAction, onUpdate: NoAction, map: "goesto_ibfk_2")
+
+  @@id([Train_no, Station_name])
+  @@index([Station_name], map: "Station_name")
+}
+
+model route {
+  Route_ID      Int             @id
+  Distance      Int
+  StopNumbers   Int
+  route_station route_station[]
+  schedule      schedule[]
+  train         train[]
+}
+
+model route_station {
+  Route_ID     Int
+  Station_name String  @db.VarChar(100)
+  Stop_Order   Int
+  route        route   @relation(fields: [Route_ID], references: [Route_ID], onDelete: NoAction, onUpdate: NoAction, map: "route_station_ibfk_1")
+  station      station @relation(fields: [Station_name], references: [Station_name], onDelete: NoAction, onUpdate: NoAction, map: "route_station_ibfk_2")
+
+  @@id([Route_ID, Station_name])
+  @@index([Station_name], map: "Station_name")
+}
+
+model schedule {
+  Route_ID   Int
+  Train_no   Int
+  Date       DateTime @db.Date
+  Start_time DateTime @db.Time(0)
+  End_time   DateTime @db.Time(0)
+  WeekDay    String   @db.VarChar(20)
+  route      route    @relation(fields: [Route_ID], references: [Route_ID], onDelete: NoAction, onUpdate: NoAction, map: "schedule_ibfk_1")
+  train      train    @relation(fields: [Train_no], references: [Train_no], onDelete: NoAction, onUpdate: NoAction, map: "schedule_ibfk_2")
+
+  @@id([Route_ID, Train_no, Date, Start_time, End_time])
+  @@index([Train_no], map: "Train_no")
+}
+
+model seat {
+  Train_no        Int
+  Coach_no        Int
+  Coach_class     String @db.VarChar(50)
+  Seat_no         Int
+  Available_seats Int
+  coach           coach  @relation(fields: [Train_no, Coach_no, Coach_class], references: [Train_no, Coach_no, Coach_class], onDelete: NoAction, onUpdate: NoAction, map: "seat_ibfk_1")
+
+  @@id([Train_no, Coach_no, Coach_class, Seat_no])
+}
+
+model station {
+  Station_name  String          @id @db.VarChar(100)
+  Latitude      Int
+  Longitude     Int
+  goesto        goesto[]
+  route_station route_station[]
+}
+
+model ticket {
+  PNR_No             String         @id @db.VarChar(20)
+  Fare               Int
+  No_of_seats_booked Int
+  Username           String?        @db.VarChar(50)
+  Train_no           Int?
+  user               user?          @relation(fields: [Username], references: [Username], onDelete: NoAction, onUpdate: NoAction, map: "ticket_ibfk_1")
+  train              train?         @relation(fields: [Train_no], references: [Train_no], onDelete: NoAction, onUpdate: NoAction, map: "ticket_ibfk_2")
+  waiting_list       waiting_list[]
+
+  @@index([Train_no], map: "Train_no")
+  @@index([Username], map: "Username")
+}
+
+model train {
+  Train_no   Int        @id
+  Train_name String     @db.VarChar(100)
+  Route_ID   Int?
+  coach      coach[]
+  goesto     goesto[]
+  schedule   schedule[]
+  ticket     ticket[]
+  route      route?     @relation(fields: [Route_ID], references: [Route_ID], onDelete: NoAction, onUpdate: NoAction, map: "train_ibfk_1")
+
+  @@index([Route_ID], map: "Route_ID")
+}
+
+model user {
+  Username   String      @id @db.VarChar(50)
+  First_name String      @db.VarChar(50)
+  Last_name  String      @db.VarChar(50)
+  DOB        DateTime    @db.Date
+  Age        Int
+  Passkey    String      @db.VarChar(255)
+  ticket     ticket[]
+  useremail  useremail[]
+  userphone  userphone[]
+}
+
+model useremail {
+  Username String @db.VarChar(50)
+  Email    String @db.VarChar(100)
+  user     user   @relation(fields: [Username], references: [Username], onDelete: NoAction, onUpdate: NoAction, map: "useremail_ibfk_1")
+
+  @@id([Username, Email])
+}
+
+model userphone {
+  Username  String @db.VarChar(50)
+  Mobile_no BigInt
+  user      user   @relation(fields: [Username], references: [Username], onDelete: NoAction, onUpdate: NoAction, map: "userphone_ibfk_1")
+
+  @@id([Username, Mobile_no])
+}
+
+model waiting_list {
+  Waiting_List_ID Int     @id
+  PNR_No          String? @db.VarChar(20)
+  ticket          ticket? @relation(fields: [PNR_No], references: [PNR_No], onDelete: NoAction, onUpdate: NoAction, map: "waiting_list_ibfk_1")
+
+  @@index([PNR_No], map: "PNR_No")
+}
