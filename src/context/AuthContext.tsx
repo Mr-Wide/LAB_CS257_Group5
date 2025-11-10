@@ -158,15 +158,14 @@ const register = async (email: string, password: string, fullName: string, phone
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Failed to update profile');
 
-  const updatedUser: User = {
-    ...user,
-    fullName: updates.fullName || user.fullName,
-    phone: updates.phone || user.phone
-  };
-
-  localStorage.setItem('current_user', JSON.stringify(updatedUser));
-  setUser(updatedUser);
+const updatedUser: User = {
+  id: data.user.Username,
+  email: data.user.useremail[0]?.Email || user.email,
+  fullName: `${data.user.First_name} ${data.user.Last_name}`,
+  phone: data.user.userphone[0]?.Mobile_no || '',
+  isAdmin: false
 };
+
  const changePassword = async (currentPassword: string, newPassword: string) => {
   if (!user) throw new Error('Not logged in');
 
