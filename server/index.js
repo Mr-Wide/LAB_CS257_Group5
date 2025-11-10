@@ -907,11 +907,23 @@ app.put('/api/profile', async (req, res) => {
     const lastName = nameParts.slice(1).join(' ') || '';
 
     const updatedUser = await prisma.user.update({
-      where: { id: userId },
+      where: { Username: userId },
       data: {
-        firstName,
-        lastName,
-        phone
+        First_name: firstName,
+        Last_name: lastName,
+        userphone: phone
+          ? {
+              upsert: {
+                where: { Username: userId },
+                update: { Mobile_no: phone },
+                create: { Mobile_no: phone, Username: userId }
+              }
+            }
+          : undefined
+      },
+      include: {
+        useremail: true,
+        userphone: true
       }
     });
 
@@ -922,23 +934,24 @@ app.put('/api/profile', async (req, res) => {
   }
 });
 
+
 // CHANGE PASSWORD
 app.post('/api/change-password', async (req, res) => {
   try {
     const { userId, currentPassword, newPassword } = req.body;
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({
+      where: { Username: userId }
+    });
 
-    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    const ok = await bcrypt.compare(currentPassword, user.Passkey);
     if (!ok) return res.status(400).json({ error: 'Incorrect current password' });
 
-    const hashed = await bcrypt.hash(newPassword, 10);
+    const newHash = await bcrypt.hash(newPassword, 10);
 
     await prisma.user.update({
-      where: { id: userId },
-      data: {
-        passwordHash: hashed
-      }
+      where: { Username: userId },
+      data: { Passkey: newHash }
     });
 
     res.json({ success: true });
@@ -947,6 +960,7 @@ app.post('/api/change-password', async (req, res) => {
     res.status(500).json({ error: 'Failed to change password' });
   }
 });
+
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
 });
