@@ -143,13 +143,46 @@ const register = async (email: string, password: string, fullName: string, phone
 
   // TODO: Implement these with backend API when ready
   const updateProfile = async (updates: Partial<User>) => {
-    throw new Error('Update profile not implemented yet');
+  if (!user) throw new Error('Not logged in');
+
+  const response = await fetch('/api/profile', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: user.id,
+      fullName: updates.fullName,
+      phone: updates.phone
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to update profile');
+
+  const updatedUser: User = {
+    ...user,
+    fullName: updates.fullName || user.fullName,
+    phone: updates.phone || user.phone
   };
 
-  const changePassword = async (currentPassword: string, newPassword: string) => {
-    throw new Error('Change password not implemented yet');
-  };
+  localStorage.setItem('current_user', JSON.stringify(updatedUser));
+  setUser(updatedUser);
+};
+ const changePassword = async (currentPassword: string, newPassword: string) => {
+  if (!user) throw new Error('Not logged in');
 
+  const response = await fetch('/api/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: user.id,
+      currentPassword,
+      newPassword
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to change password');
+};
   return (
     <AuthContext.Provider value={{ user, login, register, logout, updateProfile, changePassword }}>
       {children}
