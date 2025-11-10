@@ -1,3 +1,4 @@
+// server/index.js
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -258,7 +259,7 @@ app.post('/api/bookings', async (req, res) => {
     const schedule = await prisma.schedule.findFirst({
       where: {
         Train_no: parseInt(trainId),
-        Date: new Date(bookingDetails.travelDate) // You'll need to pass travelDate from frontend
+        Date: new Date() // TODO: pass travelDate from frontend if required
       }
     });
 
@@ -269,7 +270,7 @@ app.post('/api/bookings', async (req, res) => {
     // Create transaction to ensure data consistency
     const result = await prisma.$transaction(async (tx) => {
       // Get available seats for the specific coach type
-    const availableSeatsList = await tx.seat.findMany({
+      const availableSeatsList = await tx.seat.findMany({
         where: {
           Train_no: parseInt(trainId),
           Available_seats: 1
@@ -517,6 +518,214 @@ app.get('/api/trains', async (req, res) => {
   } catch (error) {
     console.error('Error fetching trains:', error);
     res.status(500).json({ error: 'Failed to fetch trains' });
+  }
+});
+
+/*
+  NEW: POST /api/trains/search
+  - Body: { from, to, startDate, endDate, coachClass, minFare, maxFare, sortBy }
+  - sortBy: 'shortest_time' | 'shortest_distance' | 'least_fare' | 'date_proximity'
+  This endpoint uses Prisma for relation loading + server-side filtering and sorting.
+*/
+app.post('/api/trains/search', async (req, res) => {
+  try {
+    const {
+      from, to, startDate, endDate,
+      coachClass, minFare, maxFare, sortBy
+    } = req.body;
+
+    if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+
+    const travelStart = startDate ? new Date(startDate) : null;
+    const travelEnd = endDate ? new Date(endDate) : travelStart;
+
+    // Fetch candidate trains with related rows we need (limit for safety)
+    const candidateTrains = await prisma.train.findMany({
+      take: 500,
+      include: {
+        route: { include: { route_station: { orderBy: { Stop_Order: 'asc' } } } },
+        goesto: true,
+        schedule: travelStart ? {
+          where: { Date: { gte: travelStart, lte: travelEnd || travelStart } }
+        } : true,
+        coach: true
+      }
+    });
+
+    // helper to get related info
+    function findStopInfo(train, stationName) {
+      const routeStations = train.route?.route_station || [];
+      const rs = routeStations.find(r => (r.Station_name || r.station_name) === stationName);
+      const g = (train.goesto || []).find(g => (g.Station_name || g.station_name) === stationName);
+      return { routeStation: rs, goesto: g };
+    }
+
+    let rows = candidateTrains.map(train => {
+      const fromInfo = findStopInfo(train, from);
+      const toInfo = findStopInfo(train, to);
+
+      const hasBoth = !!fromInfo.routeStation && !!toInfo.routeStation && (fromInfo.routeStation.Stop_Order < toInfo.routeStation.Stop_Order);
+
+      // compute travelSeconds if possible
+      let travelSeconds = null;
+      if (fromInfo.goesto && toInfo.goesto && (fromInfo.goesto.Departure_time || fromInfo.goesto.departure_time) && (toInfo.goesto.Arrival_time || toInfo.goesto.arrival_time)) {
+        const dep = fromInfo.goesto.Departure_time || fromInfo.goesto.departure_time;
+        const arr = toInfo.goesto.Arrival_time || toInfo.goesto.arrival_time;
+        const parseTimeString = t => {
+          if (!t) return null;
+          if (typeof t === 'object' && t instanceof Date) return t;
+          if (typeof t === 'string' && t.length <= 12) return new Date(`1970-01-01T${t}`);
+          return new Date(t);
+        };
+        const d1 = parseTimeString(dep);
+        const d2 = parseTimeString(arr);
+        if (d1 && d2) {
+          let diff = (d2 - d1) / 1000;
+          if (diff < 0) diff += 24 * 3600;
+          travelSeconds = Math.round(diff);
+        }
+      }
+
+      const distance = train.route?.Distance ?? train.route?.distance ?? null;
+      const baseFare = distance ? Math.round(distance * 2) : null;
+      const acAvailable = (train.coach || []).some(c => (c.Coach_class || c.coach_class || '').toString().toLowerCase().includes('ac'));
+
+      return {
+        trainNo: train.Train_no || train.train_no || train.id,
+        trainName: train.Train_name || train.train_name || train.name,
+        hasBoth,
+        travelSeconds,
+        distance,
+        baseFare,
+        acAvailable,
+        raw: train,
+        schedules: train.schedule || []
+      };
+    });
+
+    // keep only trains that actually have both stations in correct order
+    rows = rows.filter(r => r.hasBoth);
+
+    // coachClass filter
+    if (coachClass) {
+      const cc = coachClass.toLowerCase();
+      rows = rows.filter(r => {
+        const classes = (r.raw.coach || []).map(c => (c.Coach_class || c.coach_class || '').toString().toLowerCase());
+        return classes.some(c => c.includes(cc));
+      });
+    }
+
+    // fare filters (baseFare)
+    if (typeof minFare === 'number') rows = rows.filter(r => (r.baseFare ?? Infinity) >= minFare);
+    if (typeof maxFare === 'number') rows = rows.filter(r => (r.baseFare ?? 0) <= maxFare);
+
+    // Sorting
+    const today = new Date();
+    if (sortBy === 'shortest_time') {
+      rows.sort((a,b) => (a.travelSeconds ?? 1e12) - (b.travelSeconds ?? 1e12));
+    } else if (sortBy === 'shortest_distance') {
+      rows.sort((a,b) => (a.distance ?? 1e12) - (b.distance ?? 1e12));
+    } else if (sortBy === 'least_fare') {
+      rows.sort((a,b) => (a.baseFare ?? 1e12) - (b.baseFare ?? 1e12));
+    } else if (sortBy === 'date_proximity') {
+      const nearest = r => {
+        if (!r.schedules || r.schedules.length === 0) return 1e14;
+        const ts = r.schedules.map(s => new Date(s.Date).getTime());
+        return Math.min(...ts.map(t => Math.abs(t - today.getTime())));
+      };
+      rows.sort((a,b) => nearest(a) - nearest(b));
+    } else {
+      // default: next schedule date ascending
+      const nextDate = r => (r.schedules && r.schedules.length>0) ? new Date(r.schedules[0].Date).getTime() : 1e14;
+      rows.sort((a,b) => nextDate(a) - nextDate(b));
+    }
+
+    // Minimize response
+    const mapped = rows.map(r => ({
+      trainNo: r.trainNo,
+      trainName: r.trainName,
+      travelTime: r.travelSeconds ? `${Math.floor(r.travelSeconds/3600)}h ${Math.floor((r.travelSeconds%3600)/60)}m` : 'N/A',
+      distance: r.distance,
+      fare: r.baseFare,
+      acAvailable: r.acAvailable,
+      nextSchedules: (r.schedules || []).map(s => s.Date)
+    }));
+
+    res.json(mapped);
+  } catch (err) {
+    console.error('POST /api/trains/search error', err);
+    res.status(500).json({ error: 'search failed' });
+  }
+});
+
+/*
+  NEW: POST /api/trains/shortest-time
+  - Body: { from, to, date }
+  This uses raw SQL TIMESTAMPDIFF for DB-side computation and ordering (good for large datasets)
+*/
+app.post('/api/trains/shortest-time', async (req, res) => {
+  try {
+    const { from, to, date } = req.body;
+    if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+
+    const rows = await prisma.$queryRaw`
+      SELECT t.Train_no, t.Train_name, r.Route_ID, r.Distance,
+             TIMESTAMPDIFF(SECOND, g1.Departure_time, g2.Arrival_time) AS travel_seconds
+      FROM train t
+      JOIN goesto g1 ON t.Train_no = g1.Train_no AND g1.Station_name = ${from}
+      JOIN goesto g2 ON t.Train_no = g2.Train_no AND g2.Station_name = ${to}
+      JOIN route r ON t.Route_ID = r.Route_ID
+      WHERE g1.Stop_Order < g2.Stop_Order
+      ${ date ? prisma.raw` AND g1.Date = ${date} AND g2.Date = ${date}` : prisma.raw`` }
+      ORDER BY travel_seconds ASC
+      LIMIT 200;
+    `;
+
+    const mapped = (rows || []).map(r => ({
+      trainNo: r.Train_no,
+      trainName: r.Train_name,
+      travelSeconds: r.travel_seconds ? Number(r.travel_seconds) : null,
+      distance: r.Distance,
+      estimatedFare: r.Distance ? Math.round(r.Distance * 2) : null
+    }));
+
+    res.json(mapped);
+  } catch (err) {
+    console.error('POST /api/trains/shortest-time error', err);
+    res.status(500).json({ error: 'query failed' });
+  }
+});
+
+/*
+  NEW: POST /api/trains/nearest-route
+  - Body: { lat, lon, maxKm }
+  Finds routes with a station within maxKm of the given point (Haversine)
+*/
+app.post('/api/trains/nearest-route', async (req, res) => {
+  try {
+    const { lat, lon, maxKm = 50 } = req.body;
+    if (lat == null || lon == null) return res.status(400).json({ error: 'lat/lon required' });
+
+    const rows = await prisma.$queryRaw`
+      SELECT r.Route_ID, r.Distance,
+        MIN(6371 * ACOS(
+          COS(RADIANS(${lat})) * COS(RADIANS(s.latitude)) *
+          COS(RADIANS(s.longitude) - RADIANS(${lon})) +
+          SIN(RADIANS(${lat})) * SIN(RADIANS(s.latitude))
+        )) AS min_km
+      FROM route r
+      JOIN route_station rs ON r.Route_ID = rs.Route_ID
+      JOIN station s ON rs.Station_id = s.Station_id
+      GROUP BY r.Route_ID
+      HAVING min_km <= ${maxKm}
+      ORDER BY min_km ASC
+      LIMIT 100;
+    `;
+
+    res.json(rows);
+  } catch (err) {
+    console.error('POST /api/trains/nearest-route error', err);
+    res.status(500).json({ error: 'query failed' });
   }
 });
 
