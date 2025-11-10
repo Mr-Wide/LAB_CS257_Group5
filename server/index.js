@@ -279,9 +279,28 @@ app.post('/api/bookings', async (req, res) => {
 
       console.log(`Found ${availableSeatsList.length} available seats, need ${numSeats}`);
 
-      if (availableSeatsList.length < numSeats) {
-        throw new Error(`Not enough seats available. Found ${availableSeatsList.length}, needed ${numSeats}`);
-      }
+      
+
+     if (availableSeatsList.length < numSeats) {
+  // Generate a PNR for waiting list entry
+  const waitPNR = generatePNR();
+
+  // Add entry to waiting_list table (as per your model)
+  const waitingEntry = await prisma.waiting_list.create({
+    data: {
+      PNR_No: waitPNR
+    }
+  });
+
+  // Respond to frontend with waiting list info and stop further booking logic
+  return res.json({
+    message: 'Not enough seats available. You have been added to the waiting list.',
+    showWaitingList: true,
+    PNR_No: waitPNR,
+    waitingEntry
+  });
+}
+
 
       // Mark each specific seat as unavailable
       for (const seat of availableSeatsList) {
