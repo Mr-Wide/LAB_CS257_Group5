@@ -119,6 +119,7 @@ model user {
   ticket     ticket[]
   useremail  useremail[]
   userphone  userphone[]
+  PasswordLastChanged DateTime?
 }
 
 model useremail {

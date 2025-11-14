@@ -281,9 +281,16 @@ export const Profile = () => {
             </div>
           </form>
         ) : (
-          <div className="text-gray-600">
-            <p className="text-sm">Your password is secure. Last changed: Never</p>
-          </div>
+        <div className="text-gray-600">
+          <p className="text-sm">
+            Your password is secure. Last changed: {
+            user?.PasswordLastChanged
+            ? new Date(user.PasswordLastChanged).toLocaleDateString()
+            : "Never"
+            }
+            </p>
+            </div>
+
         )}
       </div>
     </div>
