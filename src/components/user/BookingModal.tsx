@@ -182,23 +182,71 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
                 onChange={(e) => setNumSeats(parseInt(e.target.value))}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 min="1"
-                max={Math.min(train.availableSeats, 6)}
+                max={
+                  coachType === 'ac' 
+                    ? Math.min(train.availableACSeats, 6)
+                    : Math.min(train.availableGeneralSeats, 6)
+                }
                 required
               />
+              <p className="text-sm text-gray-500 mt-1">
+                Max {coachType === 'ac' ? train.availableACSeats : train.availableGeneralSeats} seats available in {coachType} class
+              </p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Coach Type</label>
+              
+              {/* Seat Availability Summary */}
+              <div className="flex gap-4 mb-3 text-sm">
+                <div className="flex items-center gap-1">
+                  <span className="font-medium">General:</span>
+                  <span className={train.availableGeneralSeats > 0 ? "text-green-600" : "text-red-600"}>
+                    {train.availableGeneralSeats} seats
+                  </span>
+                </div>
+                {train.acAvailable && (
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">AC:</span>
+                    <span className={train.availableACSeats > 0 ? "text-green-600" : "text-red-600"}>
+                      {train.availableACSeats} seats
+                    </span>
+                  </div>
+                )}
+              </div>
+
               <select
                 value={coachType}
                 onChange={(e) => setCoachType(e.target.value as 'ac' | 'general')}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
-                <option value="general">General Class (₹{train.baseFare})</option>
-                {train.acAvailable && (
-                  <option value="ac">AC Class (₹{train.acFare})</option>
+                {/* General option - only show if seats available */}
+                {train.availableGeneralSeats > 0 && (
+                  <option value="general">
+                    General Class (₹{train.baseFare}) - {train.availableGeneralSeats} seats left
+                  </option>
+                )}
+                
+                {/* AC option - only show if AC available AND seats available */}
+                {train.acAvailable && train.availableACSeats > 0 && (
+                  <option value="ac">
+                    AC Class (₹{train.acFare}) - {train.availableACSeats} seats left
+                  </option>
+                )}
+                
+                {/* Fallback if no seats available */}
+                {train.availableGeneralSeats === 0 && (!train.acAvailable || train.availableACSeats === 0) && (
+                  <option value="" disabled>No seats available</option>
                 )}
               </select>
+
+              {/* Validation messages */}
+              {coachType === 'general' && train.availableGeneralSeats === 0 && (
+                <p className="text-sm text-red-500 mt-1">No General seats available</p>
+              )}
+              {coachType === 'ac' && train.availableACSeats === 0 && (
+                <p className="text-sm text-red-500 mt-1">No AC seats available</p>
+              )}
             </div>
           </div> {/* This closes the grid */}
 

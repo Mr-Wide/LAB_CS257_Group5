@@ -18,6 +18,8 @@ export interface Train {
   travelDuration: string;
   totalSeats: number;
   availableSeats: number;
+  availableACSeats:number;
+  availableGeneralSeats:number;
   baseFare: number;
   acAvailable: boolean;
   acFare: number;
