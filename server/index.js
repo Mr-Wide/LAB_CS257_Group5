@@ -42,7 +42,8 @@ app.post('/api/register', async (req, res) => {
     }
 
     // Generate unique username
-    const baseUsername = (firstName.toLowerCase() + lastName.toLowerCase()).replace(/\s+/g, '');
+    // Fix: Validate names and handle empty last names
+    const baseUsername = (firstName.toLowerCase() + (lastName || '').toLowerCase()).replace(/\s+/g, '') || 'user';
     let username = baseUsername || 'user';
     let counter = 1;
 
@@ -200,10 +201,12 @@ app.get('/api/bookings', async (req, res) => {
       include: {
         train: {
           include: {
-            route: true
+            route: true,
+            schedule: true //remove this if it creates error
           }
         },
-        user: true
+        user: true,
+        ticket_seat:true //this is to include the seat info
       }
     });
 
@@ -211,19 +214,24 @@ app.get('/api/bookings', async (req, res) => {
 
     // Convert to frontend format
     const bookings = tickets.map(ticket => ({
-      id: ticket.PNR_No, // Use PNR as ID
+      id: ticket.PNR_No,
       pnrNumber: ticket.PNR_No,
       trainId: ticket.Train_no.toString(),
       passengerName: `${ticket.user?.First_name} ${ticket.user?.Last_name}`,
       numSeats: ticket.No_of_seats_booked,
       totalFare: ticket.Fare,
-      travelDate: new Date().toISOString().split('T')[0], // Default to today
+      travelDate: new Date().toISOString().split('T')[0], // You might want to get this from schedule
       bookingStatus: 'confirmed',
-      paymentStatus: 'paid'
+      paymentStatus: 'paid',
+      isAc: ticket.ticket_seat.some(ts => ts.Coach_class === 'AC'),
+      bookedSeats: ticket.ticket_seat.map(ts => ({
+        coachNo: ts.Coach_no,
+        seatNo: ts.Seat_no,
+        coachClass: ts.Coach_class
+      }))
     }));
 
     res.json(bookings);
-
   } catch (error) {
     console.error('Error fetching bookings:', error);
     res.status(500).json({ error: 'Failed to fetch bookings' });
@@ -234,16 +242,22 @@ app.get('/api/bookings', async (req, res) => {
 // the booking endpoint
 app.post('/api/bookings', async (req, res) => {
   try {
+    console.log('📦 FULL REQUEST BODY:', req.body);
     const { 
       trainId, 
       username, 
       numSeats, 
       totalFare,
       passengerName,
-      coachType = 'general'
+      coachType = 'general',
+      travelDate
     } = req.body;
 
-    console.log('Creating booking:', { trainId, username, numSeats, totalFare, coachType });
+    console.log('Coach type received:', coachType);
+    const normalizedCoachType = coachType === 'ac' ? 'AC' : 'General';
+    console.log('Normalized coach type:', normalizedCoachType);
+
+    console.log('Creating booking:', { trainId, username, numSeats, totalFare, coachType,travelDate });
 
     // Check if user exists
     const user = await prisma.user.findUnique({
@@ -254,11 +268,11 @@ app.post('/api/bookings', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // In your booking endpoint, add this validation:
+    // check if train operates on selected date
     const schedule = await prisma.schedule.findFirst({
       where: {
         Train_no: parseInt(trainId),
-        Date: new Date(bookingDetails.travelDate) // You'll need to pass travelDate from frontend
+        Date: new Date(travelDate) // You'll need to pass travelDate from frontend
       }
     });
 
@@ -272,7 +286,8 @@ app.post('/api/bookings', async (req, res) => {
     const availableSeatsList = await tx.seat.findMany({
         where: {
           Train_no: parseInt(trainId),
-          Available_seats: 1
+          Available_seats: 1,
+          Coach_class: coachType === 'ac' ? { contains: 'AC' } : { not: { contains: 'AC' } }
         },
         take: numSeats
       });
@@ -302,7 +317,8 @@ app.post('/api/bookings', async (req, res) => {
 }
 
 
-      // Mark each specific seat as unavailable
+      // mark seat as unavailable
+
       for (const seat of availableSeatsList) {
         await tx.seat.update({
           where: {
@@ -320,44 +336,58 @@ app.post('/api/bookings', async (req, res) => {
         console.log(`Marked seat ${seat.Seat_no} in coach ${seat.Coach_no} as unavailable`);
       }
 
-      // Create ticket
+      // Generate PNR
+      const pnrNumber = generatePNR();
+
       const ticket = await tx.ticket.create({
         data: {
-          PNR_No: generatePNR(),
+          PNR_No: pnrNumber,
           Fare: totalFare,
           No_of_seats_booked: numSeats,
           Username: username,
           Train_no: parseInt(trainId)
-        },
-        include: {
-          train: {
-            include: {
-              route: true,
-              schedule: true
-            }
-          },
-          user: true
         }
       });
 
-      return ticket;
+      // Create ticket
+      // Create Ticket_Seat records to track exact seats
+      for (const seat of availableSeatsList) {
+        await tx.ticket_seat.create({
+          data: {
+            PNR_No: pnrNumber,
+            Train_no: seat.Train_no,
+            Coach_no: seat.Coach_no,
+            Coach_class: seat.Coach_class,
+            Seat_no: seat.Seat_no
+          }
+        });
+        console.log(`Linked seat to PNR in Ticket_Seat table`);
+      }
+
+      return { ticket, bookedSeats: availableSeatsList };
     });
 
-    console.log('Ticket created successfully:', result.PNR_No);
+    console.log('Ticket created successfully:', result.ticket.PNR_No);
+
+    
 
     // Return in frontend format
     const booking = {
-      id: result.PNR_No,
-      pnrNumber: result.PNR_No,
-      trainId: result.Train_no.toString(),
-      passengerName: passengerName || `${result.user?.First_name} ${result.user?.Last_name}`,
-      numSeats: result.No_of_seats_booked,
-      totalFare: result.Fare,
-      travelDate: result.train.schedule[0]?.Date || new Date().toISOString().split('T')[0],
+      id: result.ticket.PNR_No,
+      pnrNumber: result.ticket.PNR_No,
+      trainId: result.ticket.Train_no.toString(),
+      passengerName: passengerName || `${user.First_name} ${user.Last_name}`, // Use the user from earlier
+      numSeats: result.ticket.No_of_seats_booked,
+      totalFare: result.ticket.Fare,
+      travelDate: travelDate, // Use the travelDate from request
       bookingStatus: 'confirmed',
-      paymentStatus: 'paid'
+      paymentStatus: 'paid',
+      bookedSeats: result.bookedSeats.map(seat => ({ 
+        coachNo: seat.Coach_no,
+        seatNo: seat.Seat_no,
+        coachClass: seat.Coach_class
+      }))
     };
-
     res.json(booking);
 
   } catch (error) {
@@ -374,53 +404,47 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
     const { pnr } = req.params;
     console.log('Cancelling booking:', pnr);
 
-    // First check if booking exists
-    const ticket = await prisma.ticket.findUnique({
-      where: { 
-        PNR_No: pnr 
-      },
-      include: {
-        train: true
-      }
-    });
-
-    if (!ticket) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    // Use transaction
     await prisma.$transaction(async (tx) => {
-      // Restore the seats
-      await tx.seat.updateMany({
-        where: {
-          Train_no: ticket.Train_no,
-          Available_seats: 0
-        },
-        data: {
-          Available_seats: 1
-        }
+      // Get the exact seats from Ticket_Seat table
+      const ticketSeats = await tx.ticket_seat.findMany({
+        where: { PNR_No: pnr }
+      });
+
+    console.log(`Restoring ${ticketSeats.length} specific seats from Ticket_Seat`);
+
+      // Restore each specific seat
+      for (const ticketSeat of ticketSeats) {
+        await tx.seat.update({
+          where: {
+            Train_no_Coach_no_Coach_class_Seat_no: {
+              Train_no: ticketSeat.Train_no,
+              Coach_no: ticketSeat.Coach_no,
+              Coach_class: ticketSeat.Coach_class,
+              Seat_no: ticketSeat.Seat_no
+            }
+          },
+          data: {
+            Available_seats: 1
+          }
+        });
+      }
+
+      // Delete from Ticket_Seat (will cascade due to foreign key)
+      await tx.ticket_seat.deleteMany({
+        where: { PNR_No: pnr }
       });
 
       // Delete the ticket
       await tx.ticket.delete({
-        where: { 
-          PNR_No: pnr 
-        }
+        where: { PNR_No: pnr }
       });
     });
 
-    console.log('Booking cancelled and seats restored:', pnr);
+    console.log('Booking cancelled successfully');
     res.json({ message: 'Booking cancelled successfully' });
 
   } catch (error) {
     console.error('Error deleting booking:', error);
-    
-    if (error.code === 'P2025') {
-      return res.status(404).json({ error: 'Booking not found' });
-    } else if (error.code === 'P2003') {
-      return res.status(400).json({ error: 'Cannot cancel booking - it is referenced in waiting list' });
-    }
-    
     res.status(500).json({ error: 'Failed to cancel booking: ' + error.message });
   }
 });
@@ -577,28 +601,6 @@ app.get('/api/trains/:trainNo/seats', async (req, res) => {
   }
 });
 
-// Book a ticket
-app.post('/api/tickets', async (req, res) => {
-  try {
-    const { trainNo, username, seats, fare } = req.body;
-    
-    const ticket = await prisma.ticket.create({
-      data: {
-        PNR_No: generatePNR(),
-        Fare: fare,
-        No_of_seats_booked: seats.length,
-        Username: username,
-        Train_no: trainNo
-      }
-    });
-    
-    res.json(ticket);
-  } catch (error) {
-    console.error('Error creating ticket:', error);
-    res.status(500).json({ error: 'Failed to book ticket' });
-  }
-});
-
 // Get trains for specific date
 app.get('/api/trains/date/:date', async (req, res) => {
   try {
@@ -645,6 +647,182 @@ app.get('/api/trains/date/:date', async (req, res) => {
   } catch (error) {
     console.error('Error fetching trains by date:', error);
     res.status(500).json({ error: 'Failed to fetch trains' });
+  }
+});
+
+//search logic like weighted graph
+// Search trains between two stations
+app.get('/api/trains/search', async (req, res) => {
+  try {
+    const { from, to, date } = req.query;
+    
+    if (!from || !to) {
+      return res.status(400).json({ error: 'From and to stations are required' });
+    }
+
+    console.log(`Searching trains from ${from} to ${to} on ${date}`);
+
+    // Find trains that go through both stations
+    const trains = await prisma.train.findMany({
+      where: {
+        AND: [
+          {
+            goesto: {
+              some: {
+                Station_name: from
+              }
+            }
+          },
+          {
+            goesto: {
+              some: {
+                Station_name: to
+              }
+            }
+          }
+        ]
+      },
+      include: {
+        route: {
+          include: {
+            route_edge: true, // Get ALL route edges for this route
+            route_station: {
+              orderBy: {
+                Stop_Order: 'asc'
+              }
+            }
+          }
+        },
+        coach: {
+          include: {
+            seat: true
+          }
+        },
+        goesto: {
+          orderBy: {
+            Departure_time: 'asc'
+          }
+        },
+        schedule: date ? {
+          where: {
+            Date: new Date(date)
+          }
+        } : true
+      }
+    });
+
+    console.log(`Found ${trains.length} trains passing through both stations`);
+
+    // Filter and calculate costs for each train
+    const mappedTrains = trains.map(train => {
+      if (!train.route?.route_station || !train.route?.route_edge) return null;
+      
+      const routeStations = train.route.route_station;
+      const routeEdges = train.route.route_edge;
+      
+      // Find station positions in the route
+      const fromIndex = routeStations.findIndex(rs => rs.Station_name === from);
+      const toIndex = routeStations.findIndex(rs => rs.Station_name === to);
+      
+      // Skip if stations not found or in wrong order
+      if (fromIndex === -1 || toIndex === -1 || fromIndex >= toIndex) return null;
+      
+      // Calculate total distance and fare by summing intermediate segments
+      let totalDistance = 0;
+      let totalBaseFare = 0;
+      let totalACFare = 0;
+      
+      for (let i = fromIndex; i < toIndex; i++) {
+        const currentStation = routeStations[i].Station_name;
+        const nextStation = routeStations[i + 1].Station_name;
+        
+        // Find the edge between current and next station
+        const edge = routeEdges.find(re => 
+          re.From_Station === currentStation && re.To_Station === nextStation
+        );
+        
+        if (edge) {
+          totalDistance += edge.Segment_Distance;
+          totalBaseFare += Math.round(edge.Segment_Distance * 2); // ₹2 per km
+          totalACFare += Math.round(edge.Segment_Distance * 4);   // ₹4 per km for AC
+        }
+      }
+      
+      // If no edges found, use fallback calculation
+      if (totalDistance === 0) {
+        const fallbackDistance = (toIndex - fromIndex) * 100; // Approximate 100km per segment
+        totalBaseFare = Math.round(fallbackDistance * 2);
+        totalACFare = Math.round(fallbackDistance * 4);
+      }
+      
+      const fromStop = train.goesto.find(g => g.Station_name === from);
+      const toStop = train.goesto.find(g => g.Station_name === to);
+      
+      const schedule = Array.isArray(train.schedule) ? train.schedule[0] : train.schedule;
+      
+      // Calculate available seats
+      let totalSeats = 0;
+      let availableSeats = 0;
+      let hasAC = false;
+      
+      train.coach.forEach(coach => {
+        coach.seat.forEach(seat => {
+          totalSeats++;
+          if(seat.Available_seats === 1){
+            availableSeats++;
+          }
+          if (seat.Coach_class === 'ac') {
+            hasAC = true;
+          }
+        });
+      });
+
+      return {
+        id: train.Train_no.toString(),
+        trainNumber: train.Train_no.toString(),
+        trainName: train.Train_name,
+        sourceStation: from,
+        destinationStation: to,
+        departureTime: fromStop ? formatTime(fromStop.Departure_time) : 'Unknown',
+        arrivalTime: toStop ? formatTime(toStop.Arrival_time) : 'Unknown',
+        travelDuration: fromStop && toStop ? calcDuration(fromStop.Departure_time, toStop.Arrival_time) : 'Unknown',
+        totalSeats,
+        availableSeats,
+        baseFare: totalBaseFare,
+        acAvailable: hasAC,
+        acFare: totalACFare,
+        scheduleDate: schedule?.Date ? schedule.Date.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        status: availableSeats > 0 ? 'active' : 'sold-out',
+        totalDistance: totalDistance,
+        segmentCount: toIndex - fromIndex
+      };
+    }).filter(train => train !== null); // Remove null entries
+
+    console.log(`Returning ${mappedTrains.length} trains with proper fare calculation`);
+    res.json(mappedTrains);
+
+  } catch (error) {
+    console.error('Error searching trains:', error);
+    res.status(500).json({ error: 'Failed to search trains: ' + error.message });
+  }
+});
+
+// Add this to index.js to see all available stations
+app.get('/api/stations', async (req, res) => {
+  try {
+    const stations = await prisma.goesto.groupBy({
+      by: ['Station_name'],
+      _count: {
+        Station_name: true
+      },
+      orderBy: {
+        Station_name: 'asc'
+      }
+    });
+    
+    res.json(stations.map(s => s.Station_name));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

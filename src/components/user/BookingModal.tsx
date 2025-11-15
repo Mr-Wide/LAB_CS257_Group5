@@ -14,13 +14,12 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
   const [passengerAge, setPassengerAge] = useState('');
   const [passengerGender, setPassengerGender] = useState<'Male' | 'Female' | 'Other'>('Male');
   const [numSeats, setNumSeats] = useState(1);
-  const [isAc, setIsAc] = useState(false);
   const [travelDate, setTravelDate] = useState('');
   const [availableDates, setAvailableDates] = useState<{date: string, day: string}[]>([]);
-
-  const totalFare = (isAc && train.acAvailable ? train.acFare : train.baseFare) * numSeats;
-
-    // Fetch available dates for this train
+  const [coachType, setCoachType] = useState<'ac' | 'general'>('general');
+  const totalFare = (coachType === 'ac' ? train.acFare : train.baseFare) * numSeats;
+  
+  // Fetch available dates for this train
   useEffect(() => {
     const fetchAvailableDates = async () => {
       try {
@@ -42,34 +41,32 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-  // Add safety check
-  if(!currentUser) {
-    console.error('No user logged in');
-    alert('Please log in to book a ticket');
-    return;
-  }  
+    // Add safety check
+    if(!currentUser) {
+      console.error('No user logged in');
+      alert('Please log in to book a ticket');
+      return;
+    }  
     
-  
     console.log('BookingModal: Form submitted with data:', {
       passengerName,
       numSeats,
       totalFare,
-      trainId: train.id
+      trainId: train.id,
+      coachType
     });
 
-
-
-  const bookingDetails: BookingCreateInput = {
-      trainId:train.id,
-      username:currentUser.id,
+    const bookingDetails: BookingCreateInput = {
+      trainId: train.id,
+      username: currentUser.id,
       passengerName,
       passengerAge: parseInt(passengerAge),
       passengerGender,
       numSeats,
-      isAc,
+      coachType,
       travelDate,
       totalFare,
-      coachType: isAc? 'ac' : 'non-ac'
+      isAc: coachType === 'ac' //for backward compatibility
     };
     console.log('BookingModal: Calling onConfirm with:', bookingDetails);
     onConfirm(bookingDetails);
@@ -109,6 +106,7 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
             </div>
           </div>
 
+          {/* FIXED: Removed extra closing div that broke the grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -189,26 +187,26 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
               />
             </div>
 
-            {train.acAvailable && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Class</label>
-                <select
-                  value={isAc ? 'ac' : 'non-ac'}
-                  onChange={(e) => setIsAc(e.target.value === 'ac')}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="non-ac">Non-AC (₹{train.baseFare})</option>
-                  <option value="ac">AC (₹{train.acFare})</option>
-                </select>
-              </div>
-            )}
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Coach Type</label>
+              <select
+                value={coachType}
+                onChange={(e) => setCoachType(e.target.value as 'ac' | 'general')}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="general">General Class (₹{train.baseFare})</option>
+                {train.acAvailable && (
+                  <option value="ac">AC Class (₹{train.acFare})</option>
+                )}
+              </select>
+            </div>
+          </div> {/* This closes the grid */}
 
           <div className="bg-gray-50 rounded-xl p-4">
             <div className="flex justify-between items-center mb-2">
               <span className="text-gray-600">Base Fare:</span>
               <span className="font-semibold text-gray-800">
-                ₹{isAc && train.acAvailable ? train.acFare : train.baseFare} × {numSeats}
+                ₹{coachType === 'ac'? train.acFare : train.baseFare} × {numSeats}
               </span>
             </div>
             <div className="flex justify-between items-center pt-2 border-t border-gray-200">

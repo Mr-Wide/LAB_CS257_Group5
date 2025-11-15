@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { mockTrains } from '../../data/mockData';
+import { useEffect, useRef, useState } from 'react';
 import { Station } from '../../types';
 
 interface AutocompleteInputProps {
@@ -7,9 +6,16 @@ interface AutocompleteInputProps {
   placeholder?: string;
   value: string;
   onChange: (value: string) => void;
+  stations: string[]; // Add the stations prop
 }
 
-export const AutocompleteInput = ({ label, placeholder, value, onChange }: AutocompleteInputProps) => {
+export const AutocompleteInput = ({ 
+  label, 
+  placeholder, 
+  value, 
+  onChange, 
+  stations // Destructure the stations prop
+}: AutocompleteInputProps) => {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState<Station[]>([]);
@@ -25,16 +31,6 @@ export const AutocompleteInput = ({ label, placeholder, value, onChange }: Autoc
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // build station list from mockTrains
-  const stations = useMemo(() => {
-    const s = new Set<string>();
-    mockTrains.forEach((t: any) => {
-      if (t.sourceStation) s.add(t.sourceStation);
-      if (t.destinationStation) s.add(t.destinationStation);
-    });
-    return Array.from(s).sort();
   }, []);
 
   useEffect(() => {
@@ -115,5 +111,3 @@ function useDebounce<T>(value: T, delayMs: number) {
   }, [value, delayMs]);
   return debounced;
 }
-
-

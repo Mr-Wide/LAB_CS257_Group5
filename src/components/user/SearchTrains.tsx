@@ -22,76 +22,66 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
   const [showFilters, setShowFilters] = useState(false);
   const [searchResults, setSearchResults] = useState<Train[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [allTrains, setAllTrains] = useState<Train[]>([]); // ← NEW: Store all trains from API
-  const [loading, setLoading] = useState(true); // ← NEW: Loading state
+  const [loading, setLoading] = useState(false); 
+  const [stations, setStations] = useState<string[]>([]);
 
-  // NEW: Fetch trains from API when component loads
+
+  // Fetch stations from API when component loads
   useEffect(() => {
-    const fetchTrains = async () => {
+    const fetchStations = async () => {
       try {
-        console.log('Fetching trains from API...');
-        const response = await fetch('/api/trains');
+        console.log('Fetching stations from API...');
+        const response = await fetch('/api/stations');
         
         if (!response.ok) {
-          throw new Error('Failed to fetch trains');
+          throw new Error('Failed to fetch stations');
         }
         
         const data = await response.json();
-        console.log('Trains data received:', data);
-        setAllTrains(data);
+        console.log('Stations data received:', data);
+        setStations(data);
       } catch (error) {
-        console.error('Error fetching trains:', error);
-
-      } finally {
-        setLoading(false);
+        console.error('Error fetching stations:', error);
       }
     };
 
-    fetchTrains();
+    fetchStations();
   }, []);
+  
 
-  const handleSearch = () => {
-
-    let results = allTrains.filter(train => train.status === 'active');
-
-    if (filters.sourceStation) {
-      results = results.filter(train =>
-        train.sourceStation.toLowerCase().includes(filters.sourceStation.toLowerCase())
-      );
+  const handleSearch = async () => {
+    if (!filters.sourceStation || !filters.destinationStation) {
+      alert('Please select both source and destination stations');
+      return;
     }
 
-    if (filters.destinationStation) {
-      results = results.filter(train =>
-        train.destinationStation.toLowerCase().includes(filters.destinationStation.toLowerCase())
-      );
+    try {
+      setLoading(true);
+      console.log('Searching trains with:', filters);
+      
+      const params = new URLSearchParams({
+        from: filters.sourceStation,
+        to: filters.destinationStation,
+        date: filters.travelDate || new Date().toISOString().split('T')[0]
+      });
+      
+      const response = await fetch(`/api/trains/search?${params}`);
+      
+      if (!response.ok) {
+        throw new Error('Search failed');
+      }
+      
+      const trains = await response.json();
+      console.log('Search results:', trains);
+      setSearchResults(trains);
+      setHasSearched(true);
+    } catch (error) {
+      console.error('Error searching trains:', error);
+      alert('Search failed. Please try again.');
+      setSearchResults([]);
+    } finally {
+      setLoading(false);
     }
-
-    if (filters.minFare !== undefined) {
-      results = results.filter(train => train.baseFare >= filters.minFare!);
-    }
-
-    if (filters.maxFare !== undefined) {
-      results = results.filter(train => train.baseFare <= filters.maxFare!);
-    }
-
-    if (filters.minTime) {
-      results = results.filter(train => train.departureTime >= filters.minTime!);
-    }
-
-    if (filters.maxTime) {
-      results = results.filter(train => train.departureTime <= filters.maxTime!);
-    }
-
-    if (filters.acOnly) {
-      results = results.filter(train => train.acAvailable);
-    }
-
-    if (filters.nonAcOnly) {
-      results = results.filter(train => !train.acAvailable || train.baseFare > 0);
-    }
-
-    setSearchResults(results);
-    setHasSearched(true);
   };
 
   const resetFilters = () => {
@@ -136,6 +126,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
                 placeholder="Search station"
                 value={filters.sourceStation}
                 onChange={(v) => setFilters({ ...filters, sourceStation: v })}
+                stations={stations}
               />
             </div>
           </div>
@@ -148,6 +139,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
                 placeholder="Search station"
                 value={filters.destinationStation}
                 onChange={(v) => setFilters({ ...filters, destinationStation: v })}
+                stations={stations}
               />
             </div>
           </div>
@@ -268,7 +260,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
                       <div className="flex items-center gap-2">
                         <IndianRupee className="w-4 h-4 text-gray-600" />
                         <span className="text-lg font-bold text-gray-800">₹{train.baseFare}</span>
-                        <span className="text-sm text-gray-500">Non-AC</span>
+                        <span className="text-sm text-gray-500">General</span>
                       </div>
                       {train.acAvailable && (
                         <div className="flex items-center gap-2">
