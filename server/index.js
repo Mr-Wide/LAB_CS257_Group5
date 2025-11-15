@@ -526,20 +526,12 @@ app.get('/api/trains', async (req, res) => {
       // Calculate available seats dynamically
       let totalSeats = 0;
       let availableSeats = 0;
-      let availableACSeats = 0;
-      let availableGeneralSeats = 0;
-      let hasACCoaches = train.coach.some(coach => coach.Coach_class === 'AC');
       
       train.coach.forEach(coach => {
         coach.seat.forEach(seat => {
           totalSeats++; //each row is one physical seat
           if(seat.Available_seats ===1){
             availableSeats++;
-            if(seat.Coach_class === 'AC'){
-              availableACSeats++;
-            } else {
-              availableGeneralSeats++;
-            }
           }
         });
       });
@@ -771,9 +763,7 @@ app.get('/api/trains/search', async (req, res) => {
       // Calculate available seats
       let totalSeats = 0;
       let availableSeats = 0;
-      let availableACSeats = 0;
-      let availableGeneralSeats = 0;
-      let hasACCoaches = train.coach.some(coach => coach.Coach_class === 'AC');
+      let hasAC = false;
       
       train.coach.forEach(coach => {
         coach.seat.forEach(seat => {
@@ -782,9 +772,7 @@ app.get('/api/trains/search', async (req, res) => {
             availableSeats++;
           }
           if (seat.Coach_class === 'ac') {
-            availableACSeats++;
-          } else {
-            availableGeneralSeats++;
+            hasAC = true;
           }
         });
       });
@@ -800,10 +788,8 @@ app.get('/api/trains/search', async (req, res) => {
         travelDuration: fromStop && toStop ? calcDuration(fromStop.Departure_time, toStop.Arrival_time) : 'Unknown',
         totalSeats,
         availableSeats,
-        availableACSeats,
-        availableGeneralSeats,
         baseFare: totalBaseFare,
-        acAvailable: hasACCoaches,
+        acAvailable: hasAC,
         acFare: totalACFare,
         scheduleDate: schedule?.Date ? schedule.Date.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         status: availableSeats > 0 ? 'active' : 'sold-out',
