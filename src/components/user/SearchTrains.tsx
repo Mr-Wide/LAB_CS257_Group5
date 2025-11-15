@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, MapPin, Calendar, Filter, X, LucideTrainFront as TrainIcon, Clock, IndianRupee, Armchair } from 'lucide-react';
+import { Search, MapPin, Calendar, Filter, X, LucideTrainFront as TrainIcon, Clock, IndianRupee, Armchair, Users } from 'lucide-react';
 import { Train, SearchFilters } from '../../types';
 import { AutocompleteInput } from '../common/AutocompleteInput';
 
@@ -24,7 +24,6 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
   const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false); 
   const [stations, setStations] = useState<string[]>([]);
-
 
   // Fetch stations from API when component loads
   useEffect(() => {
@@ -184,8 +183,6 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
             </button>
           )}
         </div>
-
-        {/* ... rest of your component remains the same ... */}
       </div>
 
       {hasSearched && (
@@ -217,7 +214,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
                     <div className="text-right">
                       {train.availableSeats > 0 ? (
                         <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">
-                          {train.availableSeats} seats available
+                          {train.availableSeats} total seats available
                         </span>
                       ) : (
                         <span className="px-3 py-1 bg-red-100 text-red-700 text-xs font-semibold rounded-full">
@@ -251,6 +248,32 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
                         <p className="text-xs text-gray-500">To</p>
                         <p className="font-semibold text-gray-800">{train.destinationStation}</p>
                         <p className="text-sm text-gray-600">{train.arrivalTime}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* NEW: Seat Availability Breakdown */}
+                  <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Users className="w-4 h-4 text-gray-600" />
+                      <span className="font-semibold text-gray-800">Seat Availability</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">General Seats:</span>
+                        <span className={`font-semibold ${
+                          (train.generalSeatsAvailable || 0) > 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {train.generalSeatsAvailable || 0} available
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">AC Seats:</span>
+                        <span className={`font-semibold ${
+                          (train.acSeatsAvailable || 0) > 0 ? 'text-blue-600' : 'text-red-600'
+                        }`}>
+                          {train.acSeatsAvailable || 0} available
+                        </span>
                       </div>
                     </div>
                   </div>

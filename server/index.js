@@ -763,16 +763,24 @@ app.get('/api/trains/search', async (req, res) => {
       // Calculate available seats
       let totalSeats = 0;
       let availableSeats = 0;
+      let acSeatsAvailable = 0;
+      let generalSeatsAvailable = 0;
       let hasAC = false;
       
       train.coach.forEach(coach => {
         coach.seat.forEach(seat => {
           totalSeats++;
-          if(seat.Available_seats === 1){
+          if(seat.Available_seats === 1) {
             availableSeats++;
-          }
-          if (seat.Coach_class === 'ac') {
-            hasAC = true;
+            
+            // Count by coach type - FIXED LOGIC
+            const coachClass = seat.Coach_class?.toLowerCase() || '';
+            if (coachClass.includes('ac')) {
+              acSeatsAvailable++;
+              hasAC = true;
+            } else {
+              generalSeatsAvailable++;
+            }
           }
         });
       });
@@ -788,6 +796,8 @@ app.get('/api/trains/search', async (req, res) => {
         travelDuration: fromStop && toStop ? calcDuration(fromStop.Departure_time, toStop.Arrival_time) : 'Unknown',
         totalSeats,
         availableSeats,
+        acSeatsAvailable,
+        generalSeatsAvailable,
         baseFare: totalBaseFare,
         acAvailable: hasAC,
         acFare: totalACFare,

@@ -68,6 +68,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       // Convert your backend user format to frontend User type
       const frontendUser: User = {
         id: data.user.Username,
+        username: data.user.Username, // Map to username property
         email: data.user.useremail[0]?.Email || email,
         fullName: `${data.user.First_name} ${data.user.Last_name}`,
         phone: data.user.userphone[0]?.Mobile_no || '',
@@ -84,87 +85,129 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   };
 
-const register = async (email: string, password: string, fullName: string, phone?: string) => {
-  try {
-    console.log('AuthContext: Calling backend register API...');
-    
-    // Split fullName into first and last name
-    const nameParts = fullName.trim().split(' ');
-    const firstName = nameParts[0] || '';
-    const lastName = nameParts.slice(1).join(' ') || 'Unknown';
-    
-    const response = await fetch('/api/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email,
-        password,
-        firstName,
-        lastName,
-        phone,
-      }),
-    });
+  const register = async (email: string, password: string, fullName: string, phone?: string) => {
+    try {
+      console.log('AuthContext: Calling backend register API...');
+      
+      // Split fullName into first and last name
+      const nameParts = fullName.trim().split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || 'Unknown';
+      
+      const response = await fetch('/api/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          firstName,
+          lastName,
+          phone,
+        }),
+      });
 
-    console.log('AuthContext: Register response status:', response.status);
+      console.log('AuthContext: Register response status:', response.status);
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('AuthContext: Registration failed:', errorData);
-      throw new Error(errorData.error || 'Registration failed');
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('AuthContext: Registration failed:', errorData);
+        throw new Error(errorData.error || 'Registration failed');
+      }
+
+      const data = await response.json();
+      console.log('AuthContext: Registration successful:', data);
+      
+      // Auto-login after registration
+      const frontendUser: User = {
+        id: data.user.Username,
+        username: data.user.Username, // Map to username property
+        email: data.user.useremail[0]?.Email || email,
+        fullName: `${data.user.First_name} ${data.user.Last_name}`,
+        phone: data.user.userphone[0]?.Mobile_no || phone || '',
+        isAdmin: false,
+      };
+
+      localStorage.setItem('current_user', JSON.stringify(frontendUser));
+      setUser(frontendUser);
+
+    } catch (error) {
+      console.error('AuthContext: Registration error:', error);
+      throw error;
     }
-
-    const data = await response.json();
-    console.log('AuthContext: Registration successful:', data);
-    
-    // Auto-login after registration
-    const frontendUser: User = {
-      id: data.user.Username,
-      email: data.user.useremail[0]?.Email || email,
-      fullName: `${data.user.First_name} ${data.user.Last_name}`,
-      phone: data.user.userphone[0]?.Mobile_no || phone || '',
-      isAdmin: false,
-    };
-
-    localStorage.setItem('current_user', JSON.stringify(frontendUser));
-    setUser(frontendUser);
-
-  } catch (error) {
-    console.error('AuthContext: Registration error:', error);
-    throw error;
-  }
-};
+  };
 
   const logout = () => {
     localStorage.removeItem('current_user');
     setUser(null);
   };
 
- const updatedUser: User = {
-  id: data.user.Username,
-  email: data.user.useremail[0]?.Email || user.email,
-  fullName: `${data.user.First_name} ${data.user.Last_name}`,
-  phone: data.user.userphone[0]?.Mobile_no || '',
-  isAdmin: false
-};
+  const updateProfile = async (updates: Partial<User>) => {
+    if (!user) throw new Error('Not logged in');
 
- const changePassword = async (currentPassword: string, newPassword: string) => {
-  if (!user) throw new Error('Not logged in');
+    try {
+      console.log('AuthContext: Calling backend update profile API...');
+      
+      const response = await fetch('/api/update-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          username: user.username, // Include username in the request
+          ...updates
+        }),
+      });
 
-  const response = await fetch('/api/change-password', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userId: user.id,
-      currentPassword,
-      newPassword
-    })
-  });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update profile');
+      }
 
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Failed to change password');
-};
+      const data = await response.json();
+      console.log('AuthContext: Profile update successful:', data);
+      
+      // Update the user in state and localStorage
+      const updatedUser: User = {
+        ...user,
+        ...updates,
+        // If your backend returns the updated user, use that data
+        id: data.user?.Username || user.id,
+        username: data.user?.Username || user.username, // Ensure username is included
+        email: data.user?.useremail?.[0]?.Email || user.email,
+        fullName: data.user ? `${data.user.First_name} ${data.user.Last_name}` : user.fullName,
+        phone: data.user?.userphone?.[0]?.Mobile_no || user.phone,
+      };
+
+      localStorage.setItem('current_user', JSON.stringify(updatedUser));
+      setUser(updatedUser);
+
+    } catch (error) {
+      console.error('AuthContext: Profile update error:', error);
+      throw error;
+    }
+  };
+
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    if (!user) throw new Error('Not logged in');
+
+    const response = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: user.id,
+        username: user.username, // Include username in the request
+        currentPassword,
+        newPassword
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to change password');
+  };
+
   return (
     <AuthContext.Provider value={{ user, login, register, logout, updateProfile, changePassword }}>
       {children}
