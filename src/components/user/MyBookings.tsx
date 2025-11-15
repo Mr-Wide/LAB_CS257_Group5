@@ -61,6 +61,9 @@ export const MyBookings = () => {
     const train = getTrainDetails(booking.trainId);
     if (!train) return null;
 
+    //logs
+    
+
     return (
       <div key={booking.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition">
         <div className="flex justify-between items-start mb-4">
@@ -109,7 +112,7 @@ export const MyBookings = () => {
             <MapPin className="w-4 h-4 text-gray-500" />
             <span className="text-gray-600">Route:</span>
             <span className="font-semibold text-gray-800">
-              {train.sourceStation} → {train.destinationStation}
+              {booking.fromStation} → {booking.toStation}
             </span>
           </div>
 
@@ -193,7 +196,7 @@ export const MyBookings = () => {
             <span className="text-gray-600">Route:</span>
             <span className="font-semibold text-gray-800">
               {train.sourceStation} → {train.destinationStation}
-            </span>
+            </span> 
           </div>
 
           <div className="flex items-center gap-2 text-sm">

@@ -4,7 +4,7 @@ import { Train, SearchFilters } from '../../types';
 import { AutocompleteInput } from '../common/AutocompleteInput';
 
 interface SearchTrainsProps {
-  onBookTrain: (train: Train) => void;
+  onBookTrain: (train: Train, fromStation: string, toStation:string) => void;
 }
 
 export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
@@ -295,7 +295,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
                     </div>
 
                     <button
-                      onClick={() => onBookTrain(train)}
+                      onClick={() => onBookTrain(train, filters.sourceStation,filters.destinationStation)}
                       disabled={train.availableSeats === 0}
                       className="bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed"
                     >

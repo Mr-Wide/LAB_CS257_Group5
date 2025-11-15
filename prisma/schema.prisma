@@ -84,21 +84,29 @@ model station {
   route_edge_route_edge_From_StationTostation route_edge[]    @relation("route_edge_From_StationTostation")
   route_edge_route_edge_To_StationTostation   route_edge[]    @relation("route_edge_To_StationTostation")
   route_station                               route_station[]
+  ticket_ticket_From_StationTostation         ticket[]        @relation("ticket_From_StationTostation")
+  ticket_ticket_To_StationTostation           ticket[]        @relation("ticket_To_StationTostation")
 }
 
 model ticket {
-  PNR_No             String         @id @db.VarChar(20)
-  Fare               Int
-  No_of_seats_booked Int
-  Username           String?        @db.VarChar(50)
-  Train_no           Int?
-  user               user?          @relation(fields: [Username], references: [Username], onUpdate: NoAction, map: "ticket_ibfk_1")
-  train              train?         @relation(fields: [Train_no], references: [Train_no], onDelete: Cascade, onUpdate: NoAction, map: "ticket_ibfk_2")
-  ticket_seat        ticket_seat[]
-  waiting_list       waiting_list[]
+  PNR_No                               String         @id @db.VarChar(20)
+  Fare                                 Int
+  No_of_seats_booked                   Int
+  Username                             String?        @db.VarChar(50)
+  Train_no                             Int?
+  From_Station                         String?        @db.VarChar(100)
+  To_Station                           String?        @db.VarChar(100)
+  user                                 user?          @relation(fields: [Username], references: [Username], onUpdate: NoAction, map: "ticket_ibfk_1")
+  train                                train?         @relation(fields: [Train_no], references: [Train_no], onDelete: Cascade, onUpdate: NoAction, map: "ticket_ibfk_2")
+  station_ticket_From_StationTostation station?       @relation("ticket_From_StationTostation", fields: [From_Station], references: [Station_name], onUpdate: NoAction, map: "ticket_ibfk_3")
+  station_ticket_To_StationTostation   station?       @relation("ticket_To_StationTostation", fields: [To_Station], references: [Station_name], onUpdate: NoAction, map: "ticket_ibfk_4")
+  ticket_seat                          ticket_seat[]
+  waiting_list                         waiting_list[]
 
   @@index([Train_no], map: "Train_no")
   @@index([Username], map: "Username")
+  @@index([From_Station], map: "From_Station")
+  @@index([To_Station], map: "To_Station")
 }
 
 model train {

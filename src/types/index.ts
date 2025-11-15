@@ -43,6 +43,8 @@ export interface Booking {
   bookingStatus: 'confirmed' | 'completed' | 'cancelled';
   pnrNumber: string;
   paymentStatus: 'paid' | 'pending' | 'refunded';
+  fromStation: string;
+  toStation: string;
 }
 
 export interface WaitingListEntry {
@@ -83,7 +85,9 @@ export interface BookingCreateInput {
   isAc: boolean;
   travelDate: string;
   totalFare: number;
-  coachType?: string;        // Add this for seat allocation
+  coachType?: string;   
+  fromStation: string;
+  toStation: string;     // Add this for seat allocation
 }
 
 export interface Station {

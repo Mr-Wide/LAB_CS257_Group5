@@ -18,9 +18,12 @@ function AppContent() {
   const [showLogin, setShowLogin] = useState(true);
   const { route, navigate } = useHashRouter();
   const [selectedTrain, setSelectedTrain] = useState<Train | null>(null);
-
-  const handleBookTrain = (train: Train) => {
+  const [selectedFromStation, setSelectedFromStation] = useState<string>(''); // ADD THIS
+  const [selectedToStation, setSelectedToStation] = useState<string>('');     // ADD THIS
+  const handleBookTrain = (train: Train, fromStation: string, toStation: string) => {
     setSelectedTrain(train);
+    setSelectedFromStation(fromStation); // SET THE STATIONS
+    setSelectedToStation(toStation);     // SET THE STATIONS
   };
 
   const handleConfirmBooking = async (bookingDetails: BookingCreateInput) => {
@@ -36,7 +39,9 @@ function AppContent() {
           coachType: bookingDetails.isAc ? 'ac' : 'non-ac',
           travelDate: bookingDetails.travelDate,
           passengerAge: bookingDetails.passengerAge,
-          passengerGender: bookingDetails.passengerGender
+          passengerGender: bookingDetails.passengerGender,
+          fromStation: selectedFromStation,    // USE THE STATIONS
+          toStation: selectedToStation         // USE THE STATIONS
         });
         // Success alert is now handled in BookingsContext
       } catch (error) {
@@ -45,6 +50,8 @@ function AppContent() {
       }
     }
     setSelectedTrain(null);
+    setSelectedFromStation(''); // RESET STATIONS
+    setSelectedToStation('');   // RESET STATIONS
     navigate('bookings');
   };
 
@@ -73,7 +80,15 @@ function AppContent() {
       {selectedTrain && (
         <BookingModal
           train={selectedTrain}
-          onClose={() => setSelectedTrain(null)}
+          fromStation={selectedFromStation}
+          toStation={selectedToStation}
+          onClose={() => {
+            setSelectedTrain(null);
+            setSelectedFromStation('');
+            setSelectedToStation('');
+          }
+          
+          }
           onConfirm={handleConfirmBooking}
           currentUser={user}
         />

@@ -4,12 +4,14 @@ import { Train, BookingCreateInput, User as UserType} from '../../types';
 
 interface BookingModalProps {
   train: Train;
+  fromStation: string;
+  toStation: string;
   onClose: () => void;
   onConfirm: (bookingDetails: BookingCreateInput) => void;
   currentUser: UserType;
 }
 
-export const BookingModal = ({ train, onClose, onConfirm, currentUser }: BookingModalProps) => {
+export const BookingModal = ({ train, fromStation, toStation, onClose, onConfirm, currentUser }: BookingModalProps) => {
   const [passengerName, setPassengerName] = useState('');
   const [passengerAge, setPassengerAge] = useState('');
   const [passengerGender, setPassengerGender] = useState<'Male' | 'Female' | 'Other'>('Male');
@@ -53,7 +55,9 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
       numSeats,
       totalFare,
       trainId: train.id,
-      coachType
+      coachType,
+      fromStation,
+      toStation
     });
 
     const bookingDetails: BookingCreateInput = {
@@ -66,7 +70,9 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
       coachType,
       travelDate,
       totalFare,
-      isAc: coachType === 'ac' //for backward compatibility
+      isAc: coachType === 'ac', //for backward compatibility
+      fromStation: fromStation, // ADD THIS - crucial for backend
+      toStation: toStation      // ADD THIS - crucial for backend      
     };
     console.log('BookingModal: Calling onConfirm with:', bookingDetails);
     onConfirm(bookingDetails);
@@ -93,7 +99,7 @@ export const BookingModal = ({ train, onClose, onConfirm, currentUser }: Booking
             <div className="flex justify-between text-sm">
               <span className="text-gray-600">Route:</span>
               <span className="font-semibold text-gray-800">
-                {train.sourceStation} → {train.destinationStation}
+                {fromStation} → {toStation}
               </span>
             </div>
             <div className="flex justify-between text-sm">
