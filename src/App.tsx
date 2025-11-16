@@ -8,7 +8,7 @@ import { SearchTrains } from './components/user/SearchTrains';
 import { MyBookings } from './components/user/MyBookings';
 import { Profile } from './components/user/Profile';
 import { BookingModal } from './components/user/BookingModal';
-import { Train, BookingCreateInput } from './types'; // Remove Booking import
+import { Train, BookingCreateInput } from './types';
 import { BookingsProvider, useBookings } from './context/BookingsContext';
 import { useHashRouter } from './hooks/useHashRouter';
 import Home from './pages/Home';
@@ -19,12 +19,13 @@ function AppContent() {
   const [showLogin, setShowLogin] = useState(true);
   const { route, navigate } = useHashRouter();
   const [selectedTrain, setSelectedTrain] = useState<Train | null>(null);
-  const [selectedFromStation, setSelectedFromStation] = useState<string>(''); // ADD THIS
-  const [selectedToStation, setSelectedToStation] = useState<string>('');     // ADD THIS
+  const [selectedFromStation, setSelectedFromStation] = useState<string>('');
+  const [selectedToStation, setSelectedToStation] = useState<string>('');
+  
   const handleBookTrain = (train: Train, fromStation: string, toStation: string) => {
     setSelectedTrain(train);
-    setSelectedFromStation(fromStation); // SET THE STATIONS
-    setSelectedToStation(toStation);     // SET THE STATIONS
+    setSelectedFromStation(fromStation);
+    setSelectedToStation(toStation);
   };
 
   const handleConfirmBooking = async (bookingDetails: BookingCreateInput) => {
@@ -37,23 +38,31 @@ function AppContent() {
           numSeats: bookingDetails.numSeats,
           totalFare: bookingDetails.totalFare,
           passengerName: bookingDetails.passengerName,
-          coachType: bookingDetails.isAc ? 'ac' : 'non-ac',
+          coachType: bookingDetails.coachType,
           travelDate: bookingDetails.travelDate,
           passengerAge: bookingDetails.passengerAge,
           passengerGender: bookingDetails.passengerGender,
-          fromStation: selectedFromStation,    // USE THE STATIONS
-          toStation: selectedToStation         // USE THE STATIONS
+          fromStation: selectedFromStation,
+          toStation: selectedToStation,
+          isAc: bookingDetails.coachType === 'ac' // Add the required isAc property
         });
-        // Success alert is now handled in BookingsContext
+
+        // Success message is handled in BookingsContext based on isWaitlisted
+        // We don't need to show additional alerts here
+
       } catch (error) {
         console.error('Booking failed:', error);
         // Error alert is handled in BookingsContext
       }
     }
+    
+    // Close modal and reset states regardless of booking result
     setSelectedTrain(null);
-    setSelectedFromStation(''); // RESET STATIONS
-    setSelectedToStation('');   // RESET STATIONS
-    navigate('bookings');
+    setSelectedFromStation('');
+    setSelectedToStation('');
+    
+    // Only navigate to bookings if booking was successful
+    // The BookingsContext will handle showing success/error messages
   };
 
   if (!user) {
@@ -63,7 +72,9 @@ function AppContent() {
       <Register onToggleForm={() => setShowLogin(true)} />
     );
   }
+
   console.log('Current user object:', user);
+  
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar onNavigate={navigate as (page: string) => void} currentPage={route} />
@@ -89,9 +100,7 @@ function AppContent() {
             setSelectedTrain(null);
             setSelectedFromStation('');
             setSelectedToStation('');
-          }
-          
-          }
+          }}
           onConfirm={handleConfirmBooking}
           currentUser={user}
         />
