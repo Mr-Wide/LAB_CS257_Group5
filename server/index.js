@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
-
+import bcrypt from 'bcrypt';
 
 BigInt.prototype.toJSON = function() {
   return this.toString();
@@ -992,6 +992,7 @@ function hasStopOrderOverlap(from1, to1, from2, to2) {
 
 const PORT = process.env.PORT || 3001;
 // UPDATE PROFILE
+// UPDATE PROFILE
 app.put('/api/profile', async (req, res) => {
   try {
     const { userId, fullName, phone } = req.body;
@@ -1000,6 +1001,14 @@ app.put('/api/profile', async (req, res) => {
     const firstName = nameParts[0];
     const lastName = nameParts.slice(1).join(' ') || '';
 
+    // 1. Delete all old phone numbers for this user (do this FIRST!)
+    if (phone) {
+      await prisma.userphone.deleteMany({
+        where: { Username: userId }
+      });
+    }
+
+    // 2. Now upsert (actually, now it's just a create, but this is safest and you can still use upsert)
     const updatedUser = await prisma.user.update({
       where: { Username: userId },
       data: {
@@ -1008,9 +1017,17 @@ app.put('/api/profile', async (req, res) => {
         userphone: phone
           ? {
               upsert: {
-                where: { Username: userId },
-                update: { Mobile_no: phone },
-                create: { Mobile_no: phone, Username: userId }
+                where: {
+                  Username_Mobile_no: {
+                    Username: userId,
+                    Mobile_no: BigInt(phone.replace(/\D/g, '')),
+                  }
+                },
+                update: { Mobile_no: BigInt(phone.replace(/\D/g, '')) },
+                create: {
+                  Mobile_no: BigInt(phone.replace(/\D/g, ''))
+                  // Username key will be automatically set by Prisma as this runs as nested create!
+                }
               }
             }
           : undefined
@@ -1029,31 +1046,48 @@ app.put('/api/profile', async (req, res) => {
 });
 
 
+
+
+
+
+
+
+
+
 // CHANGE PASSWORD
 app.post('/api/change-password', async (req, res) => {
   try {
     const { userId, currentPassword, newPassword } = req.body;
-
     const user = await prisma.user.findUnique({
       where: { Username: userId }
     });
+    console.log("User found:", user);
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     const ok = await bcrypt.compare(currentPassword, user.Passkey);
+    console.log("Password matches?", ok);
+
     if (!ok) return res.status(400).json({ error: 'Incorrect current password' });
 
     const newHash = await bcrypt.hash(newPassword, 10);
 
+    // Updated block: add PasswordLastChanged
     await prisma.user.update({
       where: { Username: userId },
-      data: { Passkey: newHash }
+      data: {
+        Passkey: newHash,
+        PasswordLastChanged: new Date()  // <-- this line updates last-changed!
+      }
     });
 
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error('Backend error:', err);
     res.status(500).json({ error: 'Failed to change password' });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
