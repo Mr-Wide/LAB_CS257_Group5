@@ -296,7 +296,6 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
 
                     <button
                       onClick={() => onBookTrain(train, filters.sourceStation,filters.destinationStation)}
-                      disabled={train.availableSeats === 0}
                       className="bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed"
                     >
                       {train.availableSeats > 0 ? 'Book Now' : 'Join Waitlist'}

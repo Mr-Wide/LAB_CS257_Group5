@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcrypt';
 
 
 BigInt.prototype.toJSON = function() {
@@ -13,6 +14,99 @@ app.use(cors());
 app.use(express.json());
 
 const prisma = new PrismaClient();
+// Helper functions
+function formatTime(timeValue) {
+  if (!timeValue) return 'Unknown';
+  if (timeValue instanceof Date) {
+    return timeValue.toTimeString().slice(0, 5);
+  } else if (typeof timeValue === 'string') {
+    return timeValue.slice(0, 5);
+  }
+  return 'Unknown';
+}
+
+function calcDuration(startTime, endTime) {
+  if (!startTime || !endTime) return 'Unknown';
+  
+  const start = typeof startTime === 'string' ? 
+    new Date(`1970-01-01T${startTime}`) : startTime;
+  const end = typeof endTime === 'string' ? 
+    new Date(`1970-01-01T${endTime}`) : endTime;
+
+  let diffMs = end - start;
+  if (diffMs < 0) {
+    diffMs += 24 * 60 * 60 * 1000;
+  }
+  
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  return `${hours}h ${minutes}m`;
+}
+
+function calculateBaseFare(distance) {
+  return distance ? Math.round(distance * 2) : 1200;
+}
+
+function hasACClass(coaches) {
+  return coaches.some(coach => 
+    coach.Coach_class && (coach.Coach_class.includes('AC') || coach.Coach_class.includes('ac'))
+  );
+}
+
+function calculateACFare(distance) {
+  return distance ? Math.round(distance * 4) : 2400;
+}
+
+function generatePNR() {
+  return 'PNR' + Math.random().toString(36).substr(2, 9).toUpperCase();
+}
+
+async function getStopOrders(trainNo, fromStation, toStation) {
+  const train = await prisma.train.findUnique({
+    where: { Train_no: trainNo },
+    select: { Route_ID: true }
+  });
+  
+  if (!train) throw new Error('Train not found');
+  
+  const routeStations = await prisma.route_station.findMany({
+    where: { Route_ID: train.Route_ID },
+    orderBy: { Stop_Order: 'asc' },
+    select: { Station_name: true, Stop_Order: true }
+  });
+  
+  const fromStop = routeStations.find(rs => rs.Station_name === fromStation);
+  const toStop = routeStations.find(rs => rs.Station_name === toStation);
+  
+  if (!fromStop || !toStop || fromStop.Stop_Order >= toStop.Stop_Order) {
+    throw new Error('Invalid station sequence');
+  }
+  
+  return { fromOrder: fromStop.Stop_Order, toOrder: toStop.Stop_Order };
+}
+
+async function getStopOrder(trainNo, station) {
+  const train = await prisma.train.findUnique({
+    where: { Train_no: trainNo },
+    select: { Route_ID: true }
+  });
+  
+  if (!train) return null;
+  
+  const routeStation = await prisma.route_station.findFirst({
+    where: { 
+      Route_ID: train.Route_ID,
+      Station_name: station 
+    },
+    select: { Stop_Order: true }
+  });
+  
+  return routeStation?.Stop_Order;
+}
+
+function hasStopOrderOverlap(from1, to1, from2, to2) {
+  return !(to1 <= from2 || to2 <= from1);
+}
 
 //added extra
 app.get('/', (req, res) => {
@@ -182,8 +276,78 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-//user booking api
-// Get all bookings for a user
+// Get user's waiting list entries
+app.get('/api/waiting-list', async (req, res) => {
+  try {
+    const { username } = req.query;
+    
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+
+    const waitingList = await prisma.waiting_list.findMany({
+      where: { 
+        Username: username 
+      },
+      include: {
+        ticket: {
+          include: {
+            train: true
+          }
+        }
+      },
+      orderBy: {
+        Waiting_List_ID: 'asc'
+      }
+    });
+
+    // Convert to frontend format
+    const formattedWaitingList = waitingList.map(entry => ({
+      id: entry.Waiting_List_ID.toString(),
+      userId: entry.Username,
+      trainId: entry.Train_no.toString(),
+      travelDate: entry.Travel_Date ? entry.Travel_Date.toISOString().split('T')[0] : '',
+      passengerName: entry.ticket?.user ? `${entry.ticket.user.First_name} ${entry.ticket.user.Last_name}` : 'Unknown',
+      numSeats: entry.Seat_count,
+      isAc: entry.Coach_class?.toLowerCase().includes('ac') || false,
+      coachType: entry.Coach_class || 'general',
+      position: entry.Waiting_List_ID,
+      status: 'waiting',
+      createdAt: entry.created_at ? entry.created_at.toISOString() : new Date().toISOString(),
+      fromStation: entry.ticket?.From_Station || 'Unknown',
+      toStation: entry.ticket?.To_Station || 'Unknown',
+      totalFare: entry.ticket?.Fare || 0
+    }));
+
+    res.json(formattedWaitingList);
+  } catch (error) {
+    console.error('Error fetching waiting list:', error);
+    res.status(500).json({ error: 'Failed to fetch waiting list' });
+  }
+});
+
+// Cancel waiting list entry
+app.delete('/api/waiting-list/:waitlistId', async (req, res) => {
+  try {
+    const { waitlistId } = req.params;
+
+    await prisma.waiting_list.delete({
+      where: { 
+        Waiting_List_ID: parseInt(waitlistId) 
+      }
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Waiting list entry cancelled successfully' 
+    });
+  } catch (error) {
+    console.error('Error cancelling waiting list:', error);
+    res.status(500).json({ error: 'Failed to cancel waiting list entry' });
+  }
+});
+
+// Get user bookings (updated to include waiting list info)
 app.get('/api/bookings', async (req, res) => {
   try {
     const { username } = req.query;
@@ -193,7 +357,6 @@ app.get('/api/bookings', async (req, res) => {
       return res.status(400).json({ error: 'Username is required' });
     }
 
-    // Get tickets from database using your exact schema
     const tickets = await prisma.ticket.findMany({
       where: { 
         Username: username 
@@ -201,35 +364,42 @@ app.get('/api/bookings', async (req, res) => {
       include: {
         train: {
           include: {
-            route: true,
-            schedule: true //remove this if it creates error
+            route: true
           }
         },
         user: true,
-        ticket_seat:true //this is to include the seat info
+        ticket_seat: true,
+        waiting_list: true
       }
     });
 
     console.log(`Found ${tickets.length} tickets for ${username}`);
 
-    // Convert to frontend format
-    const bookings = tickets.map(ticket => ({
-      id: ticket.PNR_No,
-      pnrNumber: ticket.PNR_No,
-      trainId: ticket.Train_no.toString(),
-      passengerName: `${ticket.user?.First_name} ${ticket.user?.Last_name}`,
-      numSeats: ticket.No_of_seats_booked,
-      totalFare: ticket.Fare,
-      travelDate: new Date().toISOString().split('T')[0], // You might want to get this from schedule
-      bookingStatus: 'confirmed',
-      paymentStatus: 'paid',
-      isAc: ticket.ticket_seat.some(ts => ts.Coach_class === 'AC'),
-      bookedSeats: ticket.ticket_seat.map(ts => ({
-        coachNo: ts.Coach_no,
-        seatNo: ts.Seat_no,
-        coachClass: ts.Coach_class
-      }))
-    }));
+    const bookings = tickets.map(ticket => {
+      const isWaitlisted = ticket.waiting_list && ticket.waiting_list.length > 0;
+      
+      return {
+        id: ticket.PNR_No,
+        pnrNumber: ticket.PNR_No,
+        trainId: ticket.Train_no.toString(),
+        passengerName: `${ticket.user?.First_name} ${ticket.user?.Last_name}`,
+        numSeats: ticket.No_of_seats_booked,
+        totalFare: ticket.Fare,
+        travelDate: new Date().toISOString().split('T')[0],
+        bookingStatus: isWaitlisted ? 'waitlisted' : 'confirmed',
+        paymentStatus: 'paid',
+        isAc: ticket.ticket_seat.some(ts => ts.Coach_class === 'ac'),
+        coachType: ticket.ticket_seat[0]?.Coach_class || 'general',
+        fromStation: ticket.From_Station || 'Unknown',
+        toStation: ticket.To_Station || 'Unknown',
+        bookedSeats: ticket.ticket_seat.map(ts => ({
+          coachNo: ts.Coach_no,
+          seatNo: ts.Seat_no,
+          coachClass: ts.Coach_class
+        })),
+        waitingListPosition: isWaitlisted ? ticket.waiting_list[0].Waiting_List_ID : null
+      };
+    });
 
     res.json(bookings);
   } catch (error) {
@@ -238,8 +408,8 @@ app.get('/api/bookings', async (req, res) => {
   }
 });
 
-// Create a new booking. I have updated this to allow dynamic seat booking
-// the booking endpoint
+// Create booking with waiting list support
+
 app.post('/api/bookings', async (req, res) => {
   try {
     console.log('📦 FULL REQUEST BODY:', req.body);
@@ -255,40 +425,25 @@ app.post('/api/bookings', async (req, res) => {
       toStation
     } = req.body;
 
-    console.log('Coach type received:', coachType);
-    const normalizedCoachType = coachType === 'ac' ? 'AC' : 'General';
-    console.log('Normalized coach type:', normalizedCoachType);
-
-    console.log('Creating booking:', { trainId, username, numSeats, totalFare, coachType,travelDate });
-
-    // Check if user exists
-    const user = await prisma.user.findUnique({
-      where: { Username: username }
-    });
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+    if (!trainId || !username || !numSeats || !travelDate || !fromStation || !toStation) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // check if train operates on selected date
+    const seatsRequested = Number(numSeats);
+    console.log('Creating booking:', { trainId, username, seatsRequested, totalFare, coachType, travelDate });
+
+    const user = await prisma.user.findUnique({ where: { Username: username }});
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
     const schedule = await prisma.schedule.findFirst({
-      where: {
-        Train_no: parseInt(trainId),
-        Date: new Date(travelDate) // You'll need to pass travelDate from frontend
-      }
+      where: { Train_no: parseInt(trainId), Date: new Date(travelDate) }
     });
+    if (!schedule) return res.status(400).json({ error: 'Train not available on selected date' });
 
-    if (!schedule) {
-      return res.status(400).json({ error: 'Train not available on selected date' });
-    }
-
-    // Create transaction to ensure data consistency
     const result = await prisma.$transaction(async (tx) => {
-      // Get stop orders for requested journey
       const { fromOrder, toOrder } = await getStopOrders(parseInt(trainId), fromStation, toStation);
       console.log(`Journey: ${fromStation}(${fromOrder}) → ${toStation}(${toOrder})`);
 
-      // Find all seats of requested type
       const allSeats = await tx.seat.findMany({
         where: {
           Train_no: parseInt(trainId),
@@ -305,196 +460,241 @@ app.post('/api/bookings', async (req, res) => {
         }
       });
 
-    // Filter seats without overlapping journeys
-    const availableSeats = [];
-    for (const seat of allSeats) {
-      let isAvailable = true;
-      
-      // Check all existing bookings for this seat
-      for (const ticketSeat of seat.ticket_seat) {
-
-      // Only check if the ticket has station information
-        if (ticketSeat.ticket.From_Station && ticketSeat.ticket.To_Station) {
-
-        const existingFromOrder = await getStopOrder(parseInt(trainId), ticketSeat.ticket.From_Station);
-        const existingToOrder = await getStopOrder(parseInt(trainId), ticketSeat.ticket.To_Station);
-        
-        if (existingFromOrder !== null && existingToOrder !== null) {
-
-        if (hasStopOrderOverlap(fromOrder, toOrder, existingFromOrder, existingToOrder)) {
-          isAvailable = false;
-          break;
+      const availableSeats = [];
+      for (const seat of allSeats) {
+        let isAvailable = true;
+        for (const ts of seat.ticket_seat) {
+          if (ts.ticket?.From_Station && ts.ticket?.To_Station) {
+            const existingFrom = await getStopOrder(parseInt(trainId), ts.ticket.From_Station);
+            const existingTo = await getStopOrder(parseInt(trainId), ts.ticket.To_Station);
+            if (existingFrom !== null && existingTo !== null) {
+              if (hasStopOrderOverlap(fromOrder, toOrder, existingFrom, existingTo)) {
+                isAvailable = false;
+                break;
+              }
+            }
+          }
+        }
+        if (isAvailable && seat.Available_seats === 1) {
+          availableSeats.push(seat);
+          if (availableSeats.length >= seatsRequested) break;
         }
       }
-    }
-  }
-      
-      if (isAvailable) {
-        availableSeats.push(seat);
-        if (availableSeats.length >= numSeats) break;
-      }
-    }
 
-    console.log(`Found ${availableSeats.length} available seats without stop order conflicts`);
+      console.log(`Found ${availableSeats.length} available seats`);
 
-    if (availableSeats.length < numSeats) {
-      const waitPNR = generatePNR();
-      await tx.waiting_list.create({ data: { PNR_No: waitPNR } 
+      const seatsToConfirm = availableSeats.slice(0, Math.min(availableSeats.length, seatsRequested));
+      const waitingCount = seatsRequested - seatsToConfirm.length;
+      const pnr = generatePNR();
+
+      // Create ticket
+      const ticket = await tx.ticket.create({
+        data: {
+          PNR_No: pnr,
+          Fare: Math.round((Number(totalFare) || 0) * (seatsToConfirm.length / Math.max(seatsRequested, 1))),
+          No_of_seats_booked: seatsToConfirm.length,
+          Username: username,
+          Train_no: parseInt(trainId),
+          From_Station: fromStation,
+          To_Station: toStation
+        }
       });
 
-      return res.json({
-        message: 'Not enough seats available. Added to waiting list.',
-        showWaitingList: true,
-        PNR_No: waitPNR
-      });
-    }
+      // Claim available seats
+      for (const seat of seatsToConfirm) {
+        const upd = await tx.seat.updateMany({
+          where: {
+            Train_no: seat.Train_no,
+            Coach_no: seat.Coach_no,
+            Coach_class: seat.Coach_class,
+            Seat_no: seat.Seat_no,
+            Available_seats: 1
+          },
+          data: { Available_seats: 0 }
+        });
 
-    // Generate PNR and create ticket (your existing code)
-    const pnrNumber = generatePNR();
+        if (upd.count === 0) {
+          throw new Error(`Seat ${seat.Seat_no} was taken concurrently, please retry booking.`);
+        }
 
-    const ticket = await tx.ticket.create({
-      data: {
-        PNR_No: pnrNumber,
-        Fare: totalFare,
-        No_of_seats_booked: numSeats,
-        Username: username,
-        Train_no: parseInt(trainId),
-        From_Station: fromStation,  // Store stations for future overlap checks
-        To_Station: toStation
-      }
-    });
-
-    // Mark seats and create ticket_seat records (your existing code)
-    for (const seat of availableSeats.slice(0, numSeats)) {
-      await tx.seat.update({
-        where: {
-          Train_no_Coach_no_Coach_class_Seat_no: {
+        await tx.ticket_seat.create({
+          data: {
+            PNR_No: pnr,
             Train_no: seat.Train_no,
             Coach_no: seat.Coach_no,
             Coach_class: seat.Coach_class,
             Seat_no: seat.Seat_no
           }
-        },
-        data: { Available_seats: 0 }
-      });
+        });
+      }
 
-      await tx.ticket_seat.create({
-        data: {
-          PNR_No: pnrNumber,
-          Train_no: seat.Train_no,
-          Coach_no: seat.Coach_no,
-          Coach_class: seat.Coach_class,
-          Seat_no: seat.Seat_no
-        }
-      });
-    }
+      // Create waiting list entry if needed
+      let waitingEntry = null;
+      if (waitingCount > 0) {
+        // Get the next Waiting_List_ID for this train and coach class
+        const maxWaitlist = await tx.waiting_list.aggregate({
+          _max: {
+            Waiting_List_ID: true
+          },
+          where: {
+            Train_no: parseInt(trainId),
+            Coach_class: coachType
+          }
+        });
+        
+        const nextWaitlistId = (maxWaitlist._max.Waiting_List_ID || 0) + 1;
 
-    return { ticket, bookedSeats: availableSeats.slice(0, numSeats) };
-  });
+        waitingEntry = await tx.waiting_list.create({
+          data: {
+            Waiting_List_ID: nextWaitlistId, // Manually assign the ID
+            PNR_No: pnr,
+            Username: username,
+            Train_no: parseInt(trainId),
+            Coach_class: coachType,
+            Seat_count: waitingCount,
+            Travel_Date: new Date(travelDate)
+          }
+        });
+      }
 
-    console.log('Ticket created successfully:', result.ticket.PNR_No);
+      return {
+        status: 'OK',
+        ticket,
+        bookedSeats: seatsToConfirm,
+        waitingSeats: waitingCount,
+        waitingEntry: waitingEntry,
+        isWaitlisted: waitingCount > 0
+      };
+    }); // <-- CORRECTLY PLACED - closes the transaction
 
-    
+    console.log('Booking created successfully:', result.ticket.PNR_No);
 
-    // Return in frontend format
-    const booking = {
-      id: result.ticket.PNR_No,
+    const response = {
+      success: true,
+      isWaitlisted: result.isWaitlisted,
+      waitingListPosition: result.waitingEntry ? result.waitingEntry.Waiting_List_ID : null,
+      message: result.isWaitlisted 
+        ? `Added to waiting list! Position: ${result.waitingEntry.Waiting_List_ID}` 
+        : 'Booking confirmed!',
       pnrNumber: result.ticket.PNR_No,
-      trainId: result.ticket.Train_no.toString(),
-      passengerName: passengerName || `${user.First_name} ${user.Last_name}`, // Use the user from earlier
-      numSeats: result.ticket.No_of_seats_booked,
-      totalFare: result.ticket.Fare,
-      travelDate: travelDate, // Use the travelDate from request
-      bookingStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fromStation: fromStation,
-      toStation: toStation,
-      bookedSeats: result.bookedSeats.map(seat => ({ 
-        coachNo: seat.Coach_no,
-        seatNo: seat.Seat_no,
-        coachClass: seat.Coach_class
-      }))
+      booking: {
+        id: result.ticket.PNR_No,
+        pnrNumber: result.ticket.PNR_No,
+        trainId: result.ticket.Train_no.toString(),
+        passengerName: passengerName || `${user.First_name} ${user.Last_name}`,
+        numSeats: result.ticket.No_of_seats_booked,
+        totalFare: result.ticket.Fare,
+        travelDate: travelDate,
+        bookingStatus: result.isWaitlisted ? 'waitlisted' : 'confirmed',
+        paymentStatus: 'paid',
+        fromStation: fromStation,
+        toStation: toStation,
+        isAc: coachType === 'ac',
+        waitingListPosition: result.waitingEntry ? result.waitingEntry.Waiting_List_ID : null
+      }
     };
-    res.json(booking);
+
+    return res.json(response);
 
   } catch (error) {
     console.error('Error creating booking:', error);
-    res.status(500).json({ error: 'Failed to create booking: ' + error.message });
+    return res.status(500).json({ 
+      success: false,
+      error: 'Failed to create booking: ' + (error.message || error) 
+    });
   }
 });
 
-// "Cancel" booking by deleting it (since no status field)
-// Fix the cancel booking endpoint to restore seats
-// Simplified cancel booking endpoint - no waiting list handling
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Cancel booking (triggers will handle waiting list promotion)
 app.delete('/api/bookings/:pnr', async (req, res) => {
   try {
     const { pnr } = req.params;
 
     await prisma.$transaction(async (tx) => {
-      // Get the ticket being cancelled
       const ticket = await tx.ticket.findUnique({
         where: { PNR_No: pnr },
-        include: {
-          ticket_seat: {
-            include: {
-              seat: true
-            }
-          }
-        }
+        include: { ticket_seat: true }
       });
 
-      if (!ticket) {
-        throw new Error('Ticket not found');
-      }
+      if (!ticket) throw new Error('Ticket not found');
 
-      // Delete from Ticket_Seat (this removes the seat association)
-      await tx.ticket_seat.deleteMany({
-        where: { PNR_No: pnr }
-      });
+      // Delete ticket_seat entries
+      await tx.ticket_seat.deleteMany({ where: { PNR_No: pnr } });
 
-      // For each seat that was used by this ticket, check if it's still occupied
-      for (const ticketSeat of ticket.ticket_seat) {
-        // Check if this seat has any other active bookings
-        const otherBookingsForThisSeat = await tx.ticket_seat.count({
+      // Free up seats
+      for (const ts of ticket.ticket_seat) {
+        const otherCount = await tx.ticket_seat.count({
           where: {
-            Train_no: ticketSeat.Train_no,
-            Coach_no: ticketSeat.Coach_no, 
-            Seat_no: ticketSeat.Seat_no,
-            PNR_No: { not: pnr } // Exclude the cancelled booking
+            Train_no: ts.Train_no,
+            Coach_no: ts.Coach_no,
+            Coach_class: ts.Coach_class,
+            Seat_no: ts.Seat_no,
+            PNR_No: { not: pnr }
           }
         });
 
-        // Only mark as available if NO other bookings use this seat
-        if (otherBookingsForThisSeat === 0) {
-          await tx.seat.update({
+        if (otherCount === 0) {
+          await tx.seat.updateMany({
             where: {
-              Train_no_Coach_no_Coach_class_Seat_no: {
-                Train_no: ticketSeat.Train_no,
-                Coach_no: ticketSeat.Coach_no,
-                Coach_class: ticketSeat.seat.Coach_class,
-                Seat_no: ticketSeat.Seat_no
-              }
+              Train_no: ts.Train_no,
+              Coach_no: ts.Coach_no,
+              Coach_class: ts.Coach_class,
+              Seat_no: ts.Seat_no
             },
             data: { Available_seats: 1 }
           });
-          console.log(`✅ Seat ${ticketSeat.Seat_no} marked as available (no other bookings)`);
-        } else {
-          console.log(`🚫 Seat ${ticketSeat.Seat_no} remains occupied by ${otherBookingsForThisSeat} other booking(s)`);
         }
       }
 
+      // Delete waiting list entry if exists
+      await tx.waiting_list.deleteMany({ where: { PNR_No: pnr } });
+
       // Delete the ticket
-      await tx.ticket.delete({
-        where: { PNR_No: pnr }
-      });
+      await tx.ticket.delete({ where: { PNR_No: pnr } });
     });
 
-    res.json({ message: 'Booking cancelled successfully' });
+    res.json({ 
+      success: true, 
+      message: 'Booking cancelled successfully' 
+    });
   } catch (error) {
     console.error('Error cancelling booking:', error);
-    res.status(500).json({ error: 'Failed to cancel booking' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to cancel booking: ' + error.message 
+    });
   }
 });
+
+
 
 // schedule fix
 app.get('/api/trains/:trainNo/available-dates', async (req, res) => {
@@ -883,114 +1083,7 @@ app.get('/api/stations', async (req, res) => {
   }
 });
 
-// Helper functions
-function formatTime(timeValue) {
-  if (!timeValue) return 'Unknown';
-  
-  // Handle both Date objects and time strings
-  if (timeValue instanceof Date) {
-    return timeValue.toTimeString().slice(0, 5);
-  } else if (typeof timeValue === 'string') {
-    return timeValue.slice(0, 5); // Extract HH:MM from HH:MM:SS
-  }
-  return 'Unknown';
-}
 
-
-function calcDuration(startTime, endTime) {
-  if (!startTime || !endTime) return 'Unknown';
-  
-  // Convert to Date objects if they're strings
-  const start = typeof startTime === 'string' ? 
-    new Date(`1970-01-01T${startTime}`) : startTime;
-  const end = typeof endTime === 'string' ? 
-    new Date(`1970-01-01T${endTime}`) : endTime;
-
-  // Handle overnight journeys
-  let diffMs = end - start;
-  if (diffMs < 0) {
-    diffMs += 24 * 60 * 60 * 1000; // Add 24 hours for next day
-  }
-  
-  const hours = Math.floor(diffMs / (1000 * 60 * 60));
-  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-  return `${hours}h ${minutes}m`;
-}
-
-function calculateBaseFare(distance) {
-  return distance ? Math.round(distance * 2) : 1200; // ₹2 per km
-}
-
-function hasACClass(coaches) {
-  return coaches.some(coach => 
-    coach.Coach_class && (coach.Coach_class.includes('AC') || coach.Coach_class.includes('ac'))
-  );
-}
-
-function calculateACFare(distance) {
-  return distance ? Math.round(distance * 4) : 2400; // ₹4 per km for AC
-}
-
-function getDaysFromSchedule(schedules) {
-  if (!schedules || schedules.length === 0) return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const days = schedules.map(s => s.WeekDay).filter(Boolean);
-  return Array.from(new Set(days));
-}
-
-function generatePNR() {
-  return 'PNR' + Math.random().toString(36).substr(2, 9).toUpperCase();
-}
-
-// Helper functions (add these at the top of your file)
-async function getStopOrders(trainNo, fromStation, toStation) {
-  const train = await prisma.train.findUnique({
-    where: { Train_no: trainNo },
-    select: { Route_ID: true }
-  });
-  
-  if (!train) throw new Error('Train not found');
-  
-  const routeStations = await prisma.route_station.findMany({
-    where: { Route_ID: train.Route_ID },
-    orderBy: { Stop_Order: 'asc' },
-    select: { Station_name: true, Stop_Order: true }
-  });
-  
-  const fromStop = routeStations.find(rs => rs.Station_name === fromStation);
-  const toStop = routeStations.find(rs => rs.Station_name === toStation);
-  
-  if (!fromStop || !toStop || fromStop.Stop_Order >= toStop.Stop_Order) {
-    throw new Error('Invalid station sequence');
-  }
-  
-  return { fromOrder: fromStop.Stop_Order, toOrder: toStop.Stop_Order };
-}
-
-async function getStopOrder(trainNo, station) {
-  const train = await prisma.train.findUnique({
-    where: { Train_no: trainNo },
-    select: { Route_ID: true }
-  });
-  
-  if (!train) return null;
-  
-  const routeStation = await prisma.route_station.findFirst({
-    where: { 
-      Route_ID: train.Route_ID,
-      Station_name: station 
-    },
-    select: { Stop_Order: true }
-  });
-  
-  return routeStation?.Stop_Order;
-}
-
-function hasStopOrderOverlap(from1, to1, from2, to2) {
-  return !(to1 <= from2 || to2 <= from1);
-}
-
-
-const PORT = process.env.PORT || 3001;
 // UPDATE PROFILE
 app.put('/api/profile', async (req, res) => {
   try {
@@ -1055,6 +1148,7 @@ app.post('/api/change-password', async (req, res) => {
   }
 });
 
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
 });

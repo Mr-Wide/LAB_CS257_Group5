@@ -1,13 +1,14 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Ticket, Calendar, User, MapPin, Clock, IndianRupee, XCircle } from 'lucide-react';
+import { Ticket, Calendar, User, MapPin, Clock, IndianRupee, XCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Booking, WaitingListEntry, Train } from '../../types';
 import { useBookings } from '../../context/BookingsContext';
 
 export const MyBookings = () => {
   const [activeTab, setActiveTab] = useState<'current' | 'previous' | 'waitlist'>('current');
-  const { bookings, cancelBooking, loading } = useBookings();
+  const { bookings, waitingList, cancelBooking, cancelWaitingList, loading, refreshData } = useBookings();
   const [allTrains, setAllTrains] = useState<Train[]>([]);
   const [trainsLoading, setTrainsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Fetch trains from API
   useEffect(() => {
@@ -36,56 +37,127 @@ export const MyBookings = () => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const currentBookings = useMemo(() => bookings.filter(
-    (booking) => new Date(booking.travelDate) >= today && booking.bookingStatus === 'confirmed'
-  ), [bookings]);
+  // Current bookings: confirmed and future travel date
+  const currentBookings = useMemo(() => 
+    bookings.filter((booking) => 
+      new Date(booking.travelDate) >= today && 
+      booking.bookingStatus === 'confirmed'
+    ), [bookings]);
 
-  const previousBookings = useMemo(() => bookings.filter(
-    (booking) => new Date(booking.travelDate) < today || booking.bookingStatus === 'completed' || booking.bookingStatus === 'cancelled'
-  ), [bookings]);
+  // Previous bookings: past travel date or cancelled
+  const previousBookings = useMemo(() => 
+    bookings.filter((booking) => 
+      new Date(booking.travelDate) < today || 
+      booking.bookingStatus === 'cancelled'
+    ), [bookings]);
 
-  // TODO: Replace with real waiting list data from API
-  const waitingList: WaitingListEntry[] = [];
+  // Waitlisted bookings (from main bookings with waitlist status)
+  const waitlistedBookings = useMemo(() => 
+    bookings.filter((booking) => booking.bookingStatus === 'waitlisted'), 
+    [bookings]
+  );
 
   const getTrainDetails = (trainId: string) => {
     return allTrains.find((train) => train.id === trainId);
   };
 
-  const handleCancelBooking = (bookingId: string) => {
-    if (confirm('Are you sure you want to cancel this booking?')) {
-      cancelBooking(bookingId);
+  const handleCancelBooking = async (bookingId: string) => {
+    if (confirm('Are you sure you want to cancel this booking? This action cannot be undone.')) {
+      try {
+        await cancelBooking(bookingId);
+      } catch (error) {
+        alert('Failed to cancel booking. Please try again.');
+      }
     }
+  };
+
+  const handleCancelWaitlist = async (waitlistId: string) => {
+    if (confirm('Are you sure you want to cancel this waiting list request? This action cannot be undone.')) {
+      try {
+        await cancelWaitingList(waitlistId);
+      } catch (error) {
+        alert('Failed to cancel waiting list request. Please try again.');
+      }
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const getWaitlistChance = (position: number) => {
+    if (position <= 3) return 'High';
+    if (position <= 8) return 'Medium';
+    return 'Low';
+  };
+
+  const getWaitlistChanceColor = (position: number) => {
+    if (position <= 3) return 'text-green-600 bg-green-100';
+    if (position <= 8) return 'text-orange-600 bg-orange-100';
+    return 'text-red-600 bg-red-100';
   };
 
   const renderBookingCard = (booking: Booking) => {
     const train = getTrainDetails(booking.trainId);
-    if (!train) return null;
+    if (!train) {
+      console.log('Train not found for booking:', booking.trainId);
+      return null;
+    }
 
-    //logs
-    
+    const isWaitlisted = booking.bookingStatus === 'waitlisted';
+    const isCancelled = booking.bookingStatus === 'cancelled';
+    const isPast = new Date(booking.travelDate) < today;
 
     return (
-      <div key={booking.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition">
+      <div key={booking.id} className={`bg-white rounded-xl shadow-sm border p-6 hover:shadow-md transition ${
+        isWaitlisted ? 'border-orange-200' : 
+        isCancelled ? 'border-red-200' : 
+        'border-gray-200'
+      }`}>
         <div className="flex justify-between items-start mb-4">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-100 p-3 rounded-lg">
-              <Ticket className="w-6 h-6 text-blue-600" />
+            <div className={`p-3 rounded-lg ${
+              isWaitlisted ? 'bg-orange-100' : 
+              isCancelled ? 'bg-red-100' : 
+              'bg-blue-100'
+            }`}>
+              {isWaitlisted ? (
+                <AlertTriangle className="w-6 h-6 text-orange-600" />
+              ) : (
+                <Ticket className={`w-6 h-6 ${
+                  isCancelled ? 'text-red-600' : 'text-blue-600'
+                }`} />
+              )}
             </div>
             <div>
               <h3 className="text-lg font-bold text-gray-800">{train.trainName}</h3>
               <p className="text-sm text-gray-500">PNR: {booking.pnrNumber}</p>
+              {isWaitlisted && booking.waitingListPosition && (
+                <p className="text-sm text-orange-600 font-semibold">
+                  Waiting List Position: #{booking.waitingListPosition}
+                </p>
+              )}
             </div>
           </div>
           <span
             className={`px-3 py-1 text-xs font-semibold rounded-full ${
-              booking.bookingStatus === 'confirmed'
-                ? 'bg-green-100 text-green-700'
-                : booking.bookingStatus === 'completed'
-                ? 'bg-blue-100 text-blue-700'
-                : 'bg-red-100 text-red-700'
+              isWaitlisted
+                ? 'bg-orange-100 text-orange-700'
+                : isCancelled
+                ? 'bg-red-100 text-red-700'
+                : isPast
+                ? 'bg-gray-100 text-gray-700'
+                : 'bg-green-100 text-green-700'
             }`}
           >
-            {booking.bookingStatus.toUpperCase()}
+            {isWaitlisted ? 'WAITLISTED' : 
+             isCancelled ? 'CANCELLED' : 
+             isPast ? 'COMPLETED' : 'CONFIRMED'}
           </span>
         </div>
 
@@ -123,6 +195,21 @@ export const MyBookings = () => {
           </div>
         </div>
 
+        {isWaitlisted && (
+          <div className="bg-orange-50 rounded-lg p-3 mb-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-orange-700">
+                Your tickets will be confirmed automatically when seats become available
+              </span>
+              {booking.waitingListPosition && (
+                <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getWaitlistChanceColor(booking.waitingListPosition)}`}>
+                  {getWaitlistChance(booking.waitingListPosition)} Chance
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="flex justify-between items-center pt-4 border-t border-gray-200">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1">
@@ -134,13 +221,13 @@ export const MyBookings = () => {
             </span>
           </div>
 
-          {booking.bookingStatus === 'confirmed' && (
+          {!isCancelled && !isPast && (
             <button
-              onClick={() => handleCancelBooking(booking.id)}
+              onClick={() => isWaitlisted ? handleCancelWaitlist(booking.id) : handleCancelBooking(booking.id)}
               className="text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg font-semibold transition flex items-center gap-2"
             >
               <XCircle className="w-4 h-4" />
-              Cancel Booking
+              {isWaitlisted ? 'Cancel Request' : 'Cancel Booking'}
             </button>
           )}
         </div>
@@ -150,14 +237,20 @@ export const MyBookings = () => {
 
   const renderWaitlistCard = (entry: WaitingListEntry) => {
     const train = getTrainDetails(entry.trainId);
-    if (!train) return null;
+    if (!train) {
+      console.log('Train not found for waitlist entry:', entry.trainId);
+      return null;
+    }
+
+    const chance = getWaitlistChance(entry.position);
+    const chanceColor = getWaitlistChanceColor(entry.position);
 
     return (
       <div key={entry.id} className="bg-white rounded-xl shadow-sm border border-orange-200 p-6 hover:shadow-md transition">
         <div className="flex justify-between items-start mb-4">
           <div className="flex items-center gap-3">
             <div className="bg-orange-100 p-3 rounded-lg">
-              <Clock className="w-6 h-6 text-orange-600" />
+              <AlertTriangle className="w-6 h-6 text-orange-600" />
             </div>
             <div>
               <h3 className="text-lg font-bold text-gray-800">{train.trainName}</h3>
@@ -165,10 +258,15 @@ export const MyBookings = () => {
             </div>
           </div>
           <div className="text-right">
-            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-700">
-              WAITING
+            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-700 mb-2">
+              WAITING LIST
             </span>
-            <p className="text-xl font-bold text-orange-600 mt-1">Position: {entry.position}</p>
+            <div className="space-y-1">
+              <p className="text-xl font-bold text-orange-600">#{entry.position}</p>
+              <span className={`px-2 py-1 text-xs font-semibold rounded-full ${chanceColor}`}>
+                {chance} Chance
+              </span>
+            </div>
           </div>
         </div>
 
@@ -195,8 +293,8 @@ export const MyBookings = () => {
             <MapPin className="w-4 h-4 text-gray-500" />
             <span className="text-gray-600">Route:</span>
             <span className="font-semibold text-gray-800">
-              {train.sourceStation} → {train.destinationStation}
-            </span> 
+              {entry.fromStation} → {entry.toStation}
+            </span>
           </div>
 
           <div className="flex items-center gap-2 text-sm">
@@ -206,14 +304,27 @@ export const MyBookings = () => {
           </div>
         </div>
 
+        <div className="bg-orange-50 rounded-lg p-3 mb-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-orange-700">
+              Your tickets will be confirmed automatically if seats become available
+            </span>
+            <div className="flex items-center gap-1">
+              <IndianRupee className="w-4 h-4 text-orange-600" />
+              <span className="font-semibold text-orange-800">₹{entry.totalFare}</span>
+            </div>
+          </div>
+        </div>
+
         <div className="flex justify-between items-center pt-4 border-t border-gray-200">
           <span className="text-sm text-gray-600">
-            {entry.numSeats} {entry.numSeats > 1 ? 'seats' : 'seat'} • {entry.isAc ? 'AC' : 'Non-AC'}
+            {entry.numSeats} {entry.numSeats > 1 ? 'seats' : 'seat'} • {entry.isAc ? 'AC' : 'Non-AC'} • Joined on {new Date(entry.createdAt).toLocaleDateString()}
           </span>
           <button
-            onClick={() => alert('Cancelled waitlist entry')}
-            className="text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg font-semibold transition"
+            onClick={() => handleCancelWaitlist(entry.id)}
+            className="text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg font-semibold transition flex items-center gap-2"
           >
+            <XCircle className="w-4 h-4" />
             Cancel Request
           </button>
         </div>
@@ -235,9 +346,58 @@ export const MyBookings = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-800 mb-2">My Bookings</h1>
-        <p className="text-gray-600">View and manage your train reservations</p>
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">My Bookings</h1>
+          <p className="text-gray-600">View and manage your train reservations and waiting list</p>
+        </div>
+        <button
+          onClick={handleManualRefresh}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-blue-400 disabled:cursor-not-allowed"
+        >
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-100 p-3 rounded-lg">
+              <Ticket className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Current Bookings</p>
+              <p className="text-2xl font-bold text-gray-800">{currentBookings.length}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3">
+            <div className="bg-green-100 p-3 rounded-lg">
+              <Calendar className="w-6 h-6 text-green-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Previous Bookings</p>
+              <p className="text-2xl font-bold text-gray-800">{previousBookings.length}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-xl shadow-sm border border-orange-200 p-6">
+          <div className="flex items-center gap-3">
+            <div className="bg-orange-100 p-3 rounded-lg">
+              <AlertTriangle className="w-6 h-6 text-orange-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Waiting List</p>
+              <p className="text-2xl font-bold text-gray-800">{waitlistedBookings.length + waitingList.length}</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
@@ -250,7 +410,7 @@ export const MyBookings = () => {
                 : 'text-gray-600 hover:text-gray-800'
             }`}
           >
-            Currently Booked ({currentBookings.length})
+            Current Bookings ({currentBookings.length})
           </button>
           <button
             onClick={() => setActiveTab('previous')}
@@ -260,7 +420,7 @@ export const MyBookings = () => {
                 : 'text-gray-600 hover:text-gray-800'
             }`}
           >
-            Previously Booked ({previousBookings.length})
+            Previous Bookings ({previousBookings.length})
           </button>
           <button
             onClick={() => setActiveTab('waitlist')}
@@ -270,7 +430,7 @@ export const MyBookings = () => {
                 : 'text-gray-600 hover:text-gray-800'
             }`}
           >
-            Waiting List ({waitingList.length})
+            Waiting List ({waitlistedBookings.length + waitingList.length})
           </button>
         </div>
       </div>
@@ -306,14 +466,19 @@ export const MyBookings = () => {
 
         {activeTab === 'waitlist' && (
           <>
-            {waitingList.length === 0 ? (
+            {(waitlistedBookings.length + waitingList.length) === 0 ? (
               <div className="bg-white rounded-xl shadow-sm p-12 text-center">
-                <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                <AlertTriangle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">No waiting list entries</h3>
                 <p className="text-gray-600">You don't have any trains on the waiting list</p>
               </div>
             ) : (
-              waitingList.map(renderWaitlistCard)
+              <>
+                {/* Show waitlisted bookings from main bookings array */}
+                {waitlistedBookings.map(renderBookingCard)}
+                {/* Show separate waiting list entries */}
+                {waitingList.map(renderWaitlistCard)}
+              </>
             )}
           </>
         )}
