@@ -42,8 +42,7 @@ app.post('/api/register', async (req, res) => {
     }
 
     // Generate unique username
-    // Fix: Validate names and handle empty last names
-    const baseUsername = (firstName.toLowerCase() + (lastName || '').toLowerCase()).replace(/\s+/g, '') || 'user';
+    const baseUsername = (firstName.toLowerCase() + lastName.toLowerCase()).replace(/\s+/g, '');
     let username = baseUsername || 'user';
     let counter = 1;
 
@@ -69,7 +68,10 @@ app.post('/api/register', async (req, res) => {
     const today = new Date();
     const age = today.getFullYear() - dob.getFullYear();
 
-    // Create user in database
+    // ✅ Hash the password before storing
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user in database with hashed password
     const user = await prisma.user.create({
       data: {
         Username: username,
@@ -77,7 +79,7 @@ app.post('/api/register', async (req, res) => {
         Last_name: lastName,
         DOB: dob,
         Age: age,
-        Passkey: password,
+        Passkey: hashedPassword, // <-- Store hashed password here!
       },
     });
 
@@ -1001,14 +1003,14 @@ app.put('/api/profile', async (req, res) => {
     const firstName = nameParts[0];
     const lastName = nameParts.slice(1).join(' ') || '';
 
-    // 1. Delete all old phone numbers for this user (do this FIRST!)
+    // 1. Delete all old phone numbers for this user (if updating phone)
     if (phone) {
       await prisma.userphone.deleteMany({
         where: { Username: userId }
       });
     }
 
-    // 2. Now upsert (actually, now it's just a create, but this is safest and you can still use upsert)
+    // 2. Upsert/create phone record
     const updatedUser = await prisma.user.update({
       where: { Username: userId },
       data: {
@@ -1026,7 +1028,6 @@ app.put('/api/profile', async (req, res) => {
                 update: { Mobile_no: BigInt(phone.replace(/\D/g, '')) },
                 create: {
                   Mobile_no: BigInt(phone.replace(/\D/g, ''))
-                  // Username key will be automatically set by Prisma as this runs as nested create!
                 }
               }
             }
@@ -1044,13 +1045,6 @@ app.put('/api/profile', async (req, res) => {
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
-
-
-
-
-
-
-
 
 
 
@@ -1072,13 +1066,9 @@ app.post('/api/change-password', async (req, res) => {
 
     const newHash = await bcrypt.hash(newPassword, 10);
 
-    // Updated block: add PasswordLastChanged
     await prisma.user.update({
       where: { Username: userId },
-      data: {
-        Passkey: newHash,
-        PasswordLastChanged: new Date()  // <-- this line updates last-changed!
-      }
+      data: { Passkey: newHash }
     });
 
     res.json({ success: true });
