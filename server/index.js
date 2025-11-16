@@ -105,8 +105,11 @@ async function getStopOrder(trainNo, station) {
 }
 
 function hasStopOrderOverlap(from1, to1, from2, to2) {
-  return !(to1 <= from2 || to2 <= from1);
+  // Symmetric overlap check
+  // Journeys overlap if one starts before the other ends
+  return from1 < to2 && from2 < to1;
 }
+
 
 //added extra
 app.get('/', (req, res) => {
@@ -376,8 +379,13 @@ app.get('/api/bookings', async (req, res) => {
     console.log(`Found ${tickets.length} tickets for ${username}`);
 
     const bookings = tickets.map(ticket => {
+    
       const isWaitlisted = ticket.waiting_list && ticket.waiting_list.length > 0;
-      
+      // Use the actual Travel_Date from the ticket
+      const travelDate = ticket.Travel_Date 
+        ? ticket.Travel_Date.toISOString().split('T')[0]
+        : new Date().toISOString().split('T')[0]; // Fallback
+
       return {
         id: ticket.PNR_No,
         pnrNumber: ticket.PNR_No,
@@ -385,7 +393,7 @@ app.get('/api/bookings', async (req, res) => {
         passengerName: `${ticket.user?.First_name} ${ticket.user?.Last_name}`,
         numSeats: ticket.No_of_seats_booked,
         totalFare: ticket.Fare,
-        travelDate: new Date().toISOString().split('T')[0],
+        travelDate: travelDate,
         bookingStatus: isWaitlisted ? 'waitlisted' : 'confirmed',
         paymentStatus: 'paid',
         isAc: ticket.ticket_seat.some(ts => ts.Coach_class === 'ac'),
@@ -460,28 +468,56 @@ app.post('/api/bookings', async (req, res) => {
         }
       });
 
-      const availableSeats = [];
+      const seatsForJourney = [];
+
+      // First pass: Find seats that can be reused (currently occupied but no conflict)
+      const reusableSeats = [];
       for (const seat of allSeats) {
-        let isAvailable = true;
-        for (const ts of seat.ticket_seat) {
-          if (ts.ticket?.From_Station && ts.ticket?.To_Station) {
-            const existingFrom = await getStopOrder(parseInt(trainId), ts.ticket.From_Station);
-            const existingTo = await getStopOrder(parseInt(trainId), ts.ticket.To_Station);
-            if (existingFrom !== null && existingTo !== null) {
-              if (hasStopOrderOverlap(fromOrder, toOrder, existingFrom, existingTo)) {
-                isAvailable = false;
+        if (seat.Available_seats === 0) { // Currently occupied
+          let canReuse = true;
+          for (const ts of seat.ticket_seat) {
+            if (ts.ticket?.From_Station && ts.ticket?.To_Station) {
+              const existingFrom = await getStopOrder(parseInt(trainId), ts.ticket.From_Station);
+              const existingTo = await getStopOrder(parseInt(trainId), ts.ticket.To_Station);
+              if (existingFrom !== null && existingTo !== null && 
+                  hasStopOrderOverlap(fromOrder, toOrder, existingFrom, existingTo)) {
+                canReuse = false;
                 break;
               }
             }
           }
-        }
-        if (isAvailable && seat.Available_seats === 1) {
-          availableSeats.push(seat);
-          if (availableSeats.length >= seatsRequested) break;
+          if (canReuse) {
+            reusableSeats.push(seat);
+            console.log(`🔄 Seat ${seat.Coach_no}-${seat.Seat_no} can be REUSED`);
+          }
         }
       }
 
-      console.log(`Found ${availableSeats.length} available seats`);
+      // Second pass: Find available seats with no conflicts
+      const newAvailableSeats = [];
+      for (const seat of allSeats) {
+        if (seat.Available_seats === 1) { // Physically available
+          let noConflicts = true;
+          for (const ts of seat.ticket_seat) {
+            if (ts.ticket?.From_Station && ts.ticket?.To_Station) {
+              const existingFrom = await getStopOrder(parseInt(trainId), ts.ticket.From_Station);
+              const existingTo = await getStopOrder(parseInt(trainId), ts.ticket.To_Station);
+              if (existingFrom !== null && existingTo !== null && 
+                  hasStopOrderOverlap(fromOrder, toOrder, existingFrom, existingTo)) {
+                noConflicts = false;
+                break;
+              }
+            }
+          }
+          if (noConflicts) {
+            newAvailableSeats.push(seat);
+          }
+        }
+      }
+
+      // Combine reusable seats and new available seats
+      const availableSeats = [...reusableSeats, ...newAvailableSeats];
+      console.log(`Found ${reusableSeats.length} reusable seats and ${newAvailableSeats.length} new available seats`);
 
       const seatsToConfirm = availableSeats.slice(0, Math.min(availableSeats.length, seatsRequested));
       const waitingCount = seatsRequested - seatsToConfirm.length;
@@ -496,27 +532,13 @@ app.post('/api/bookings', async (req, res) => {
           Username: username,
           Train_no: parseInt(trainId),
           From_Station: fromStation,
-          To_Station: toStation
+          To_Station: toStation,
+          Travel_Date:new Date(travelDate)
         }
       });
 
       // Claim available seats
       for (const seat of seatsToConfirm) {
-        const upd = await tx.seat.updateMany({
-          where: {
-            Train_no: seat.Train_no,
-            Coach_no: seat.Coach_no,
-            Coach_class: seat.Coach_class,
-            Seat_no: seat.Seat_no,
-            Available_seats: 1
-          },
-          data: { Available_seats: 0 }
-        });
-
-        if (upd.count === 0) {
-          throw new Error(`Seat ${seat.Seat_no} was taken concurrently, please retry booking.`);
-        }
-
         await tx.ticket_seat.create({
           data: {
             PNR_No: pnr,
@@ -620,6 +642,7 @@ app.post('/api/bookings', async (req, res) => {
 });
 
 // Cancel booking and promote waiting list entries
+// Cancel booking and promote waiting list entries
 app.delete('/api/bookings/:pnr', async (req, res) => {
   try {
     const { pnr } = req.params;
@@ -629,7 +652,12 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
         where: { PNR_No: pnr },
         include: { 
           ticket_seat: true,
-          waiting_list: true
+          waiting_list: true,
+          train: {
+            include: {
+              route: true
+            }
+          }
         }
       });
 
@@ -639,33 +667,8 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
       const coachClass = ticket.ticket_seat[0]?.Coach_class || 'general';
       const seatsFreed = ticket.No_of_seats_booked;
 
-      // Delete ticket_seat entries
+      // Delete ticket_seat entries (triggers will handle seat availability)
       await tx.ticket_seat.deleteMany({ where: { PNR_No: pnr } });
-
-      // Free up seats
-      for (const ts of ticket.ticket_seat) {
-        const otherCount = await tx.ticket_seat.count({
-          where: {
-            Train_no: ts.Train_no,
-            Coach_no: ts.Coach_no,
-            Coach_class: ts.Coach_class,
-            Seat_no: ts.Seat_no,
-            PNR_No: { not: pnr }
-          }
-        });
-
-        if (otherCount === 0) {
-          await tx.seat.updateMany({
-            where: {
-              Train_no: ts.Train_no,
-              Coach_no: ts.Coach_no,
-              Coach_class: ts.Coach_class,
-              Seat_no: ts.Seat_no
-            },
-            data: { Available_seats: 1 }
-          });
-        }
-      }
 
       // Delete waiting list entry if this ticket had one
       if (ticket.waiting_list && ticket.waiting_list.length > 0) {
@@ -678,17 +681,34 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
       // MANUALLY PROMOTE FROM WAITING LIST
       let promotedCount = 0;
       if (trainNo) {
-        // Get available seats after cancellation
-        const availableSeats = await tx.seat.findMany({
+        // Get ALL seats to check segment availability properly
+        const allSeats = await tx.seat.findMany({
           where: { 
             Train_no: trainNo, 
-            Coach_class: coachClass,
-            Available_seats: 1 
+            Coach_class: coachClass
+          },
+          include: {
+            ticket_seat: {
+              include: {
+                ticket: {
+                  select: { 
+                    PNR_No: true,
+                    From_Station: true, 
+                    To_Station: true 
+                  }
+                }
+              }
+            }
           },
           orderBy: [{ Coach_no: 'asc' }, { Seat_no: 'asc' }]
         });
 
-        if (availableSeats.length > 0) {
+        // Filter physically available seats (triggers should have set Available_seats = 1)
+        const physicallyAvailableSeats = allSeats.filter(seat => seat.Available_seats === 1);
+        
+        console.log(`Found ${physicallyAvailableSeats.length} physically available seats for segment checking`);
+
+        if (physicallyAvailableSeats.length > 0) {
           // Get waiting list entries in order
           const waitingEntries = await tx.waiting_list.findMany({
             where: { 
@@ -698,75 +718,149 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
             include: {
               ticket: {
                 include: {
-                  user: true
+                  user: true,
+                  train: {
+                    include: {
+                      route: true
+                    }
+                  }
                 }
               }
             },
             orderBy: { Waiting_List_ID: 'asc' }
           });
 
-          let seatsAssigned = 0;
+          let totalSeatsAssigned = 0;
           
           for (const waitEntry of waitingEntries) {
-            if (seatsAssigned >= availableSeats.length) break;
+            if (totalSeatsAssigned >= physicallyAvailableSeats.length) break;
 
             const seatsNeeded = waitEntry.Seat_count;
-            const seatsAvailable = availableSeats.length - seatsAssigned;
-            const seatsToAssign = Math.min(seatsNeeded, seatsAvailable);
+            const seatsAvailable = physicallyAvailableSeats.length - totalSeatsAssigned;
+            const maxSeatsToAssign = Math.min(seatsNeeded, seatsAvailable);
 
-            if (seatsToAssign > 0) {
-              promotedCount++;
+            if (maxSeatsToAssign > 0) {
+              // Get the journey details for this waiting list entry
+              const waitFromStation = waitEntry.ticket?.From_Station;
+              const waitToStation = waitEntry.ticket?.To_Station;
               
-              // Update the existing ticket to confirmed status
-              await tx.ticket.update({
-                where: { PNR_No: waitEntry.PNR_No },
-                data: { 
-                  No_of_seats_booked: seatsToAssign,
-                  Fare: Math.round((waitEntry.ticket?.Fare || 0) * (seatsToAssign / Math.max(seatsNeeded, 1)))
-                }
-              });
-
-              // Assign specific seats
-              for (let i = 0; i < seatsToAssign; i++) {
-                const seat = availableSeats[seatsAssigned + i];
-                
-                // Mark seat as taken
-                await tx.seat.updateMany({
-                  where: {
-                    Train_no: seat.Train_no,
-                    Coach_no: seat.Coach_no,
-                    Coach_class: seat.Coach_class,
-                    Seat_no: seat.Seat_no
-                  },
-                  data: { Available_seats: 0 }
-                });
-
-                // Create ticket_seat entry
-                await tx.ticket_seat.create({
-                  data: {
-                    PNR_No: waitEntry.PNR_No,
-                    Train_no: seat.Train_no,
-                    Coach_no: seat.Coach_no,
-                    Coach_class: seat.Coach_class,
-                    Seat_no: seat.Seat_no
-                  }
-                });
+              if (!waitFromStation || !waitToStation) {
+                console.log('Skipping waiting list entry - missing station info');
+                continue;
               }
+              
+              const { fromOrder: waitFromOrder, toOrder: waitToOrder } = await getStopOrders(trainNo, waitFromStation, waitToStation);
+              
+              // Find seats that are actually available for THIS specific journey
+              const seatsAvailableForThisJourney = [];
+              for (const seat of physicallyAvailableSeats.slice(totalSeatsAssigned)) {
+                let isAvailableForJourney = true;
+                
+                // Check all existing bookings for this seat
+                for (const ts of seat.ticket_seat) {
+                  if (ts.ticket?.From_Station && ts.ticket?.To_Station) {
+                    const existingFrom = await getStopOrder(trainNo, ts.ticket.From_Station);
+                    const existingTo = await getStopOrder(trainNo, ts.ticket.To_Station);
+                    
+                    if (existingFrom !== null && existingTo !== null) {
+                              // ✅ ADD DEBUG LOGS RIGHT HERE:
+                      console.log(`🎯 Checking overlap: Waiting ${waitFromStation}(${waitFromOrder})→${waitToStation}(${waitToOrder}) vs Existing ${ts.ticket.From_Station}(${existingFrom})→${ts.ticket.To_Station}(${existingTo})`);
+                      if (hasStopOrderOverlap(waitFromOrder, waitToOrder, existingFrom, existingTo)) {
+                        console.log(`❌ CONFLICT DETECTED for seat ${seat.Coach_no}-${seat.Seat_no}`);
+                        isAvailableForJourney = false;
+                        break;
+                      } else {
+                        console.log(`✅ NO conflict for seat ${seat.Coach_no}-${seat.Seat_no}`);
+                      }
+                    }
+                  }
+                }
+                
+                if (isAvailableForJourney) {
+                  console.log(`🎉 Seat ${seat.Coach_no}-${seat.Seat_no} is AVAILABLE for journey`);
+                  seatsAvailableForThisJourney.push(seat);
+                  if (seatsAvailableForThisJourney.length >= maxSeatsToAssign) break;
+                }
+              }
+              
+              const actualSeatsToAssign = Math.min(maxSeatsToAssign, seatsAvailableForThisJourney.length);
+              
+              if (actualSeatsToAssign > 0) {
+                promotedCount++;
+                
+                // CALCULATE ACTUAL FARE based on the original journey distance
+                const isAC = waitEntry.Coach_class?.toLowerCase().includes('ac');
+                
+                // Get the actual distance for the waiting list journey
+                const waitFromOrder = await getStopOrder(trainNo, waitFromStation);
+                const waitToOrder = await getStopOrder(trainNo, waitToStation);
+                
+                let journeyDistance = 0;
+                if (waitFromOrder !== null && waitToOrder !== null && waitEntry.ticket?.train?.route) {
+                  // Calculate proportional distance based on stop orders
+                  const totalStops = await tx.route_station.count({
+                    where: { Route_ID: waitEntry.ticket.train.Route_ID }
+                  });
+                  
+                  if (totalStops > 1) {
+                    // Use proportional distance calculation
+                    const segmentRatio = (waitToOrder - waitFromOrder) / (totalStops - 1);
+                    journeyDistance = (waitEntry.ticket.train.route.Distance || 500) * segmentRatio;
+                  }
+                }
+                
+                // Use the same fare calculation as booking creation
+                const farePerSeat = isAC ? calculateACFare(journeyDistance) : calculateBaseFare(journeyDistance);
+                const newTotalFare = Math.round(farePerSeat * actualSeatsToAssign);
 
-              seatsAssigned += seatsToAssign;
+                console.log(`Assigning ${actualSeatsToAssign} seats to PNR ${waitEntry.PNR_No}, Fare: ${newTotalFare}, Distance: ${journeyDistance}km`);
 
-              // Update or remove waiting list entry
-              if (seatsToAssign >= seatsNeeded) {
-                // All seats assigned, remove from waiting list
-                await tx.waiting_list.delete({
-                  where: { Waiting_List_ID: waitEntry.Waiting_List_ID }
+                // Update the ticket
+                const currentTicket = await tx.ticket.findUnique({
+                  where: { PNR_No: waitEntry.PNR_No }
                 });
-              } else {
-                // Partial assignment, update remaining seats
-                await tx.waiting_list.update({
-                  where: { Waiting_List_ID: waitEntry.Waiting_List_ID },
-                  data: { Seat_count: seatsNeeded - seatsToAssign }
-                });
+
+                if (currentTicket) {
+                  await tx.ticket.update({
+                    where: { PNR_No: waitEntry.PNR_No },
+                    data: { 
+                      No_of_seats_booked: currentTicket.No_of_seats_booked + actualSeatsToAssign,
+                      Fare: currentTicket.Fare + newTotalFare
+                    }
+                  });
+                }
+
+                // Assign specific seats (triggers will handle seat availability)
+                for (let i = 0; i < actualSeatsToAssign; i++) {
+                  const seat = seatsAvailableForThisJourney[i];
+
+                  // Create ticket_seat entry (trigger will set Available_seats = 0)
+                  await tx.ticket_seat.create({
+                    data: {
+                      PNR_No: waitEntry.PNR_No,
+                      Train_no: seat.Train_no,
+                      Coach_no: seat.Coach_no,
+                      Coach_class: seat.Coach_class,
+                      Seat_no: seat.Seat_no
+                    }
+                  });
+                }
+
+                totalSeatsAssigned += actualSeatsToAssign;
+
+                // Update or remove waiting list entry
+                if (actualSeatsToAssign >= seatsNeeded) {
+                  // All requested seats assigned, remove from waiting list
+                  await tx.waiting_list.delete({
+                    where: { Waiting_List_ID: waitEntry.Waiting_List_ID }
+                  });
+                } else {
+                  // Partial assignment, update waiting list with remaining seats
+                  await tx.waiting_list.update({
+                    where: { Waiting_List_ID: waitEntry.Waiting_List_ID },
+                    data: { Seat_count: seatsNeeded - actualSeatsToAssign }
+                  });
+                }
               }
             }
           }
@@ -778,7 +872,7 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
         seatsFreed: seatsFreed,
         promotedCount: promotedCount
       };
-    }); // <-- This closes the transaction
+    });
 
     res.json({ 
       success: true, 
@@ -796,6 +890,34 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
 });
 
 
+// Test the current overlap logic
+// Test the fixed function
+app.get('/api/debug/test-overlap-fixed', (req, res) => {
+  const testCases = [
+    { from1: 1, to1: 2, from2: 2, to2: 3, expected: false, description: "A→B vs B→C (should share seat)" },
+    { from1: 1, to1: 3, from2: 2, to2: 4, expected: true, description: "A→C vs B→D (should conflict)" },
+    { from1: 2, to1: 3, from2: 1, to2: 2, expected: false, description: "B→C vs A→B (should share seat)" },
+    { from1: 1, to1: 3, from2: 3, to2: 5, expected: false, description: "A→C vs C→E (should share seat)" }
+  ];
+  
+  function fixedOverlap(from1, to1, from2, to2) {
+    return from1 < to2 && from2 < to1;
+  }
+  
+  const results = testCases.map(test => {
+    const actual = fixedOverlap(test.from1, test.to1, test.from2, test.to2);
+    return {
+      ...test,
+      actual: actual,
+      correct: actual === test.expected
+    };
+  });
+  
+  res.json({
+    function: "hasStopOrderOverlap(from1, to1, from2, to2) { return from1 < to2 && from2 < to1; }",
+    testResults: results
+  });
+});
 
 // schedule fix
 app.get('/api/trains/:trainNo/available-dates', async (req, res) => {

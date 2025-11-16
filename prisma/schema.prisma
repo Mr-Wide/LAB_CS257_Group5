@@ -96,6 +96,7 @@ model ticket {
   Train_no                             Int?
   From_Station                         String?        @db.VarChar(100)
   To_Station                           String?        @db.VarChar(100)
+  Travel_Date                          DateTime?      @db.Date
   user                                 user?          @relation(fields: [Username], references: [Username], onUpdate: NoAction, map: "ticket_ibfk_1")
   train                                train?         @relation(fields: [Train_no], references: [Train_no], onDelete: Cascade, onUpdate: NoAction, map: "ticket_ibfk_2")
   station_ticket_From_StationTostation station?       @relation("ticket_From_StationTostation", fields: [From_Station], references: [Station_name], onUpdate: NoAction, map: "ticket_ibfk_3")
