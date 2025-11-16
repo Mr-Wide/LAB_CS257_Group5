@@ -1,3 +1,41 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Background video styles */
+.background-video {
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.background-video__video {
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+}
+.background-video__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(120deg, rgba(55,92,214,0.18) 0%, rgba(23,32,52,0.6) 80%);
+}
+.glass-card {
+  background: rgba(255,255,255,0.13);
+  box-shadow: 0 8px 32px 0 rgba(31,38,135,0.23);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px); /* Added for Safari/iOS support */
+  border-radius: 1.25rem;
+  border: 1.5px solid rgba(255,255,255,0.18);
+  z-index: 10;
+  padding: 2.5rem;
+}
+.glass-card h2 {
+  background: linear-gradient(90deg, #3761db, #5bc6fa 65%, #2323ae 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: bold;
+}
+
+
