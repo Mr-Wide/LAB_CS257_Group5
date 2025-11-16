@@ -531,6 +531,20 @@ app.post('/api/bookings', async (req, res) => {
       // Create waiting list entry if needed
       let waitingEntry = null;
       if (waitingCount > 0) {
+        const existingWaitlist = await tx.waiting_list.findFirst({
+          where: {
+            ticket: {
+              Username: username
+            },
+            Train_no: parseInt(trainId),
+            Coach_class: coachType,
+            Travel_Date: new Date(travelDate)
+          }
+        });
+
+        if (existingWaitlist) {
+          throw new Error('You already have a waiting list entry for this train and date. Please cancel the existing one first.');
+        }
         // Get the next Waiting_List_ID for this train and coach class
         const maxWaitlist = await tx.waiting_list.aggregate({
           _max: {
@@ -605,46 +619,25 @@ app.post('/api/bookings', async (req, res) => {
   }
 });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Cancel booking (triggers will handle waiting list promotion)
+// Cancel booking and promote waiting list entries
 app.delete('/api/bookings/:pnr', async (req, res) => {
   try {
     const { pnr } = req.params;
 
-    await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.findUnique({
         where: { PNR_No: pnr },
-        include: { ticket_seat: true }
+        include: { 
+          ticket_seat: true,
+          waiting_list: true
+        }
       });
 
       if (!ticket) throw new Error('Ticket not found');
+
+      const trainNo = ticket.Train_no;
+      const coachClass = ticket.ticket_seat[0]?.Coach_class || 'general';
+      const seatsFreed = ticket.No_of_seats_booked;
 
       // Delete ticket_seat entries
       await tx.ticket_seat.deleteMany({ where: { PNR_No: pnr } });
@@ -674,17 +667,125 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
         }
       }
 
-      // Delete waiting list entry if exists
-      await tx.waiting_list.deleteMany({ where: { PNR_No: pnr } });
+      // Delete waiting list entry if this ticket had one
+      if (ticket.waiting_list && ticket.waiting_list.length > 0) {
+        await tx.waiting_list.deleteMany({ where: { PNR_No: pnr } });
+      }
 
       // Delete the ticket
       await tx.ticket.delete({ where: { PNR_No: pnr } });
-    });
+
+      // MANUALLY PROMOTE FROM WAITING LIST
+      let promotedCount = 0;
+      if (trainNo) {
+        // Get available seats after cancellation
+        const availableSeats = await tx.seat.findMany({
+          where: { 
+            Train_no: trainNo, 
+            Coach_class: coachClass,
+            Available_seats: 1 
+          },
+          orderBy: [{ Coach_no: 'asc' }, { Seat_no: 'asc' }]
+        });
+
+        if (availableSeats.length > 0) {
+          // Get waiting list entries in order
+          const waitingEntries = await tx.waiting_list.findMany({
+            where: { 
+              Train_no: trainNo,
+              Coach_class: coachClass
+            },
+            include: {
+              ticket: {
+                include: {
+                  user: true
+                }
+              }
+            },
+            orderBy: { Waiting_List_ID: 'asc' }
+          });
+
+          let seatsAssigned = 0;
+          
+          for (const waitEntry of waitingEntries) {
+            if (seatsAssigned >= availableSeats.length) break;
+
+            const seatsNeeded = waitEntry.Seat_count;
+            const seatsAvailable = availableSeats.length - seatsAssigned;
+            const seatsToAssign = Math.min(seatsNeeded, seatsAvailable);
+
+            if (seatsToAssign > 0) {
+              promotedCount++;
+              
+              // Update the existing ticket to confirmed status
+              await tx.ticket.update({
+                where: { PNR_No: waitEntry.PNR_No },
+                data: { 
+                  No_of_seats_booked: seatsToAssign,
+                  Fare: Math.round((waitEntry.ticket?.Fare || 0) * (seatsToAssign / Math.max(seatsNeeded, 1)))
+                }
+              });
+
+              // Assign specific seats
+              for (let i = 0; i < seatsToAssign; i++) {
+                const seat = availableSeats[seatsAssigned + i];
+                
+                // Mark seat as taken
+                await tx.seat.updateMany({
+                  where: {
+                    Train_no: seat.Train_no,
+                    Coach_no: seat.Coach_no,
+                    Coach_class: seat.Coach_class,
+                    Seat_no: seat.Seat_no
+                  },
+                  data: { Available_seats: 0 }
+                });
+
+                // Create ticket_seat entry
+                await tx.ticket_seat.create({
+                  data: {
+                    PNR_No: waitEntry.PNR_No,
+                    Train_no: seat.Train_no,
+                    Coach_no: seat.Coach_no,
+                    Coach_class: seat.Coach_class,
+                    Seat_no: seat.Seat_no
+                  }
+                });
+              }
+
+              seatsAssigned += seatsToAssign;
+
+              // Update or remove waiting list entry
+              if (seatsToAssign >= seatsNeeded) {
+                // All seats assigned, remove from waiting list
+                await tx.waiting_list.delete({
+                  where: { Waiting_List_ID: waitEntry.Waiting_List_ID }
+                });
+              } else {
+                // Partial assignment, update remaining seats
+                await tx.waiting_list.update({
+                  where: { Waiting_List_ID: waitEntry.Waiting_List_ID },
+                  data: { Seat_count: seatsNeeded - seatsToAssign }
+                });
+              }
+            }
+          }
+        }
+      }
+
+      return { 
+        message: 'Booking cancelled and waiting list processed',
+        seatsFreed: seatsFreed,
+        promotedCount: promotedCount
+      };
+    }); // <-- This closes the transaction
 
     res.json({ 
       success: true, 
-      message: 'Booking cancelled successfully' 
+      message: result.message,
+      promotedCount: result.promotedCount
     });
+
   } catch (error) {
     console.error('Error cancelling booking:', error);
     res.status(500).json({ 
