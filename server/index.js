@@ -337,32 +337,100 @@ app.post('/api/bookings', async (req, res) => {
 
     console.log(`Found ${availableSeats.length} available seats without stop order conflicts`);
 
-    if (availableSeats.length < numSeats) {
-      const waitPNR = generatePNR();
-      await tx.waiting_list.create({ data: { PNR_No: waitPNR } 
-      });
+      
+//WAITING LIST
+let seatsToBook = availableSeats.slice(0, numSeats);
+let waitingCount = numSeats - seatsToBook.length;
 
-      return res.json({
-        message: 'Not enough seats available. Added to waiting list.',
-        showWaitingList: true,
-        PNR_No: waitPNR
-      });
+let pnrNumber = generatePNR();
+
+if (seatsToBook.length > 0 && waitingCount > 0) {
+  // Confirm as many seats as possible
+  const ticket = await tx.ticket.create({
+    data: {
+      PNR_No: pnrNumber,
+      Fare: totalFare,
+      No_of_seats_booked: seatsToBook.length,
+      Username: username,
+      Train_no: parseInt(trainId),
+      From_Station: fromStation,
+      To_Station: toStation
     }
+  });
 
-    // Generate PNR and create ticket (your existing code)
-    const pnrNumber = generatePNR();
-
-    const ticket = await tx.ticket.create({
+  for (const seat of seatsToBook) {
+    await tx.seat.update({
+      where: {
+        Train_no_Coach_no_Coach_class_Seat_no: {
+          Train_no: seat.Train_no,
+          Coach_no: seat.Coach_no,
+          Coach_class: seat.Coach_class,
+          Seat_no: seat.Seat_no
+        }
+      },
+      data: { Available_seats: 0 }
+    });
+    await tx.ticket_seat.create({
       data: {
         PNR_No: pnrNumber,
-        Fare: totalFare,
-        No_of_seats_booked: numSeats,
-        Username: username,
-        Train_no: parseInt(trainId),
-        From_Station: fromStation,  // Store stations for future overlap checks
-        To_Station: toStation
+        Train_no: seat.Train_no,
+        Coach_no: seat.Coach_no,
+        Coach_class: seat.Coach_class,
+        Seat_no: seat.Seat_no
       }
     });
+  }
+
+  // Create a waiting list entry for the remaining seats
+  let wlPNR = generatePNR();
+  await tx.waiting_list.create({
+    data: {
+      PNR_No: wlPNR,
+      Username: username,
+      Train_no: parseInt(trainId),
+      Coach_class: coachType,
+      Seat_count: waitingCount
+    }
+  });
+
+  // Respond with both confirmed and waiting info
+  return res.json({
+    message: `Only ${seatsToBook.length} seats were confirmable. ${waitingCount} can be added to waiting list.`,
+    confirmedPNR: pnrNumber,
+    waitingListOffer: true,
+    waitingCount: waitingCount,
+    waitingPNR: wlPNR
+  });
+}
+
+// If all seats available: (keep your old code for a full confirm here!)
+if (seatsToBook.length === numSeats) {
+  // Existing logic for when all seats are confirmable as usual.
+}
+
+// If no seats available:
+if (seatsToBook.length === 0) {
+  const wlPNR = generatePNR();
+  await tx.waiting_list.create({
+    data: {
+      PNR_No: wlPNR,
+      Username: username,
+      Train_no: parseInt(trainId),
+      Coach_class: coachType,
+      Seat_count: numSeats
+    }
+  });
+
+  return res.json({
+    message: 'No seats available. Offered waiting list.',
+    waitingListOffer: true,
+    waitingPNR: wlPNR
+  });
+}
+
+
+//  WL end
+
 
     // Mark seats and create ticket_seat records (your existing code)
     for (const seat of availableSeats.slice(0, numSeats)) {
@@ -423,9 +491,7 @@ app.post('/api/bookings', async (req, res) => {
   }
 });
 
-// "Cancel" booking by deleting it (since no status field)
-// Fix the cancel booking endpoint to restore seats
-// Simplified cancel booking endpoint - no waiting list handling
+//CANCEL
 app.delete('/api/bookings/:pnr', async (req, res) => {
   try {
     const { pnr } = req.params;
@@ -481,6 +547,47 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
         } else {
           console.log(`🚫 Seat ${ticketSeat.Seat_no} remains occupied by ${otherBookingsForThisSeat} other booking(s)`);
         }
+
+        // PROMOTE WAITING LIST ON CANCEL (for each seat freed, handle one WL entry)
+        const earliestWL = await tx.waiting_list.findFirst({
+          where: {
+            Train_no: ticketSeat.Train_no,
+            Coach_class: ticketSeat.seat.Coach_class
+          },
+          orderBy: { Waiting_List_ID: 'asc' }
+        });
+
+        if (earliestWL) {
+          const newPNR = earliestWL.PNR_No || generatePNR();
+
+          // Create a new confirmed ticket for 1 seat (customize if you want group promotion)
+          const newTicket = await tx.ticket.create({
+            data: {
+              PNR_No: newPNR,
+              Fare: ticket.Fare, // Or your fare logic
+              No_of_seats_booked: 1,
+              Username: earliestWL.Username,
+              Train_no: earliestWL.Train_no,
+              From_Station: ticket.From_Station,
+              To_Station: ticket.To_Station
+            }
+          });
+
+          await tx.ticket_seat.create({
+            data: {
+              PNR_No: newPNR,
+              Train_no: ticketSeat.Train_no,
+              Coach_no: ticketSeat.Coach_no,
+              Coach_class: ticketSeat.seat.Coach_class,
+              Seat_no: ticketSeat.Seat_no
+            }
+          });
+
+          await tx.waiting_list.delete({
+            where: { Waiting_List_ID: earliestWL.Waiting_List_ID }
+          });
+          console.log(`🎉 Promoted WL entry for ${earliestWL.Username} (PNR: ${newPNR}) to confirmed!`);
+        }
       }
 
       // Delete the ticket
@@ -489,12 +596,13 @@ app.delete('/api/bookings/:pnr', async (req, res) => {
       });
     });
 
-    res.json({ message: 'Booking cancelled successfully' });
+    res.json({ message: 'Booking cancelled successfully (and waiting list promoted if available)' });
   } catch (error) {
     console.error('Error cancelling booking:', error);
     res.status(500).json({ error: 'Failed to cancel booking' });
   }
 });
+
 
 // schedule fix
 app.get('/api/trains/:trainNo/available-dates', async (req, res) => {
