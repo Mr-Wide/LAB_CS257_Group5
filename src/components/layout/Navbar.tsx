@@ -1,9 +1,9 @@
-import { LucideTrainFront as Train, User, LogOut, Settings } from 'lucide-react';
+import { LucideTrainFront as Train, User, LogOut, Settings, Home } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useState } from 'react';
 
 interface NavbarProps {
-  onNavigate: (page: 'dashboard' | 'bookings' | 'profile' | 'admin' | 'login') => void;
+  onNavigate: (page: string) => void;
   currentPage: string;
 }
 
@@ -17,8 +17,8 @@ export const Navbar = ({ onNavigate, currentPage }: NavbarProps) => {
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-8">
             <button
-              onClick={() => onNavigate('dashboard')}
-              className="flex items-center space-x-2 text-blue-600"
+              onClick={() => onNavigate('home')}
+              className="flex items-center space-x-2 text-blue-600 hover:text-blue-700 transition"
             >
               <Train className="w-8 h-8" />
               <span className="text-xl font-bold">Railway Reservation</span>
@@ -26,6 +26,17 @@ export const Navbar = ({ onNavigate, currentPage }: NavbarProps) => {
 
             {user && !user.isAdmin && (
               <div className="hidden md:flex space-x-1">
+                <button
+                  onClick={() => onNavigate('home')}
+                  className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${
+                    currentPage === 'home'
+                      ? 'bg-blue-50 text-blue-600'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <Home className="w-4 h-4" />
+                  Home
+                </button>
                 <button
                   onClick={() => onNavigate('dashboard')}
                   className={`px-4 py-2 rounded-lg font-medium transition ${

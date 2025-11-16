@@ -36,7 +36,6 @@ export const Profile = () => {
       setPasswordError('Password must be at least 6 characters');
       return;
     }
-
     if (newPassword !== confirmPassword) {
       setPasswordError('Passwords do not match');
       return;
@@ -98,7 +97,6 @@ export const Profile = () => {
                 required
               />
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Mail className="w-4 h-4 inline mr-1" />
@@ -112,7 +110,6 @@ export const Profile = () => {
               />
               <p className="text-xs text-gray-500 mt-1">Email cannot be changed</p>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Phone className="w-4 h-4 inline mr-1" />
@@ -126,7 +123,6 @@ export const Profile = () => {
                 placeholder="1234567890"
               />
             </div>
-
             <div className="flex gap-4">
               <button
                 type="button"
@@ -157,7 +153,6 @@ export const Profile = () => {
                 <p className="font-semibold text-gray-800">{user.fullName}</p>
               </div>
             </div>
-
             <div className="flex items-center gap-3 pb-4 border-b border-gray-200">
               <Mail className="w-5 h-5 text-gray-500" />
               <div>
@@ -165,7 +160,6 @@ export const Profile = () => {
                 <p className="font-semibold text-gray-800">{user.email}</p>
               </div>
             </div>
-
             <div className="flex items-center gap-3 pb-4 border-b border-gray-200">
               <Phone className="w-5 h-5 text-gray-500" />
               <div>
@@ -173,7 +167,6 @@ export const Profile = () => {
                 <p className="font-semibold text-gray-800">{user.phone || 'Not provided'}</p>
               </div>
             </div>
-
             <div className="flex items-center gap-3">
               <div className="w-5 h-5 flex items-center justify-center">
                 <div
@@ -222,7 +215,6 @@ export const Profile = () => {
                 required
               />
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Lock className="w-4 h-4 inline mr-1" />
@@ -236,7 +228,6 @@ export const Profile = () => {
                 required
               />
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Lock className="w-4 h-4 inline mr-1" />
@@ -250,13 +241,11 @@ export const Profile = () => {
                 required
               />
             </div>
-
             {passwordError && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
                 {passwordError}
               </div>
             )}
-
             <div className="flex gap-4">
               <button
                 type="button"
@@ -282,7 +271,9 @@ export const Profile = () => {
           </form>
         ) : (
           <div className="text-gray-600">
-            <p className="text-sm">Your password is secure. Last changed: Never</p>
+            <p className="text-sm">
+              Your password is secure.
+            </p>
           </div>
         )}
       </div>

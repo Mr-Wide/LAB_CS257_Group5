@@ -139,8 +139,7 @@ app.post('/api/register', async (req, res) => {
     }
 
     // Generate unique username
-    // Fix: Validate names and handle empty last names
-    const baseUsername = (firstName.toLowerCase() + (lastName || '').toLowerCase()).replace(/\s+/g, '') || 'user';
+    const baseUsername = (firstName.toLowerCase() + lastName.toLowerCase()).replace(/\s+/g, '');
     let username = baseUsername || 'user';
     let counter = 1;
 
@@ -166,7 +165,10 @@ app.post('/api/register', async (req, res) => {
     const today = new Date();
     const age = today.getFullYear() - dob.getFullYear();
 
-    // Create user in database
+    // ✅ Hash the password before storing
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user in database with hashed password
     const user = await prisma.user.create({
       data: {
         Username: username,
@@ -174,7 +176,7 @@ app.post('/api/register', async (req, res) => {
         Last_name: lastName,
         DOB: dob,
         Age: age,
-        Passkey: password,
+        Passkey: hashedPassword, // <-- Store hashed password here!
       },
     });
 
@@ -1308,6 +1310,7 @@ app.get('/api/stations', async (req, res) => {
 
 
 // UPDATE PROFILE
+// UPDATE PROFILE
 app.put('/api/profile', async (req, res) => {
   try {
     const { userId, fullName, phone } = req.body;
@@ -1316,6 +1319,14 @@ app.put('/api/profile', async (req, res) => {
     const firstName = nameParts[0];
     const lastName = nameParts.slice(1).join(' ') || '';
 
+    // 1. Delete all old phone numbers for this user (if updating phone)
+    if (phone) {
+      await prisma.userphone.deleteMany({
+        where: { Username: userId }
+      });
+    }
+
+    // 2. Upsert/create phone record
     const updatedUser = await prisma.user.update({
       where: { Username: userId },
       data: {
@@ -1324,9 +1335,16 @@ app.put('/api/profile', async (req, res) => {
         userphone: phone
           ? {
               upsert: {
-                where: { Username: userId },
-                update: { Mobile_no: phone },
-                create: { Mobile_no: phone, Username: userId }
+                where: {
+                  Username_Mobile_no: {
+                    Username: userId,
+                    Mobile_no: BigInt(phone.replace(/\D/g, '')),
+                  }
+                },
+                update: { Mobile_no: BigInt(phone.replace(/\D/g, '')) },
+                create: {
+                  Mobile_no: BigInt(phone.replace(/\D/g, ''))
+                }
               }
             }
           : undefined
@@ -1345,16 +1363,21 @@ app.put('/api/profile', async (req, res) => {
 });
 
 
+
 // CHANGE PASSWORD
 app.post('/api/change-password', async (req, res) => {
   try {
     const { userId, currentPassword, newPassword } = req.body;
-
     const user = await prisma.user.findUnique({
       where: { Username: userId }
     });
+    console.log("User found:", user);
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     const ok = await bcrypt.compare(currentPassword, user.Passkey);
+    console.log("Password matches?", ok);
+
     if (!ok) return res.status(400).json({ error: 'Incorrect current password' });
 
     const newHash = await bcrypt.hash(newPassword, 10);
@@ -1366,7 +1389,7 @@ app.post('/api/change-password', async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error('Backend error:', err);
     res.status(500).json({ error: 'Failed to change password' });
   }
 });

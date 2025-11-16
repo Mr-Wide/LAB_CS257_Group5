@@ -79,6 +79,7 @@ export interface SearchFilters {
   maxTime?: string;
   acOnly?: boolean;
   nonAcOnly?: boolean;
+  shortestTime?: boolean;
 }
 
 export interface BookingCreateInput {

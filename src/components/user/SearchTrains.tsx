@@ -18,6 +18,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
     maxTime: undefined,
     acOnly: false,
     nonAcOnly: false,
+    shortestTime: false,
   });
   const [showFilters, setShowFilters] = useState(false);
   const [searchResults, setSearchResults] = useState<Train[]>([]);
@@ -46,7 +47,13 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
 
     fetchStations();
   }, []);
-  
+
+  // Helper function to convert time string "HH:MM" to minutes
+  const timeToMinutes = (timeStr: string): number => {
+    if (!timeStr) return 0;
+    const parts = timeStr.split(':').map(Number);
+    return (parts[0] || 0) * 60 + (parts[1] || 0);
+  };
 
   const handleSearch = async () => {
     if (!filters.sourceStation || !filters.destinationStation) {
@@ -64,6 +71,14 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
         date: filters.travelDate || new Date().toISOString().split('T')[0]
       });
       
+      // Add optional filters to query params if set
+      if (filters.minFare !== undefined) params.set('minFare', String(filters.minFare));
+      if (filters.maxFare !== undefined) params.set('maxFare', String(filters.maxFare));
+      if (filters.minTime) params.set('minTime', filters.minTime);
+      if (filters.maxTime) params.set('maxTime', filters.maxTime);
+      if (filters.acOnly) params.set('acOnly', '1');
+      if (filters.nonAcOnly) params.set('nonAcOnly', '1');
+      
       const response = await fetch(`/api/trains/search?${params}`);
       
       if (!response.ok) {
@@ -72,7 +87,28 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
       
       const trains = await response.json();
       console.log('Search results:', trains);
-      setSearchResults(trains);
+
+      // Client-side fallback filtering in case backend doesn't support all params
+      let filtered = trains.filter((t: Train) => {
+        if (filters.minFare !== undefined && t.baseFare < filters.minFare) return false;
+        if (filters.maxFare !== undefined && t.baseFare > filters.maxFare) return false;
+        if (filters.acOnly && !t.acAvailable) return false;
+        if (filters.nonAcOnly && t.acAvailable) return false;
+        if (filters.minTime && t.departureTime < filters.minTime) return false;
+        if (filters.maxTime && t.departureTime > filters.maxTime) return false;
+        return true;
+      });
+
+      // Sort by travel duration if shortestTime filter is enabled
+      if (filters.shortestTime) {
+        filtered = filtered.sort((a: Train, b: Train) => {
+          const durationA = timeToMinutes(a.travelDuration);
+          const durationB = timeToMinutes(b.travelDuration);
+          return durationA - durationB;
+        });
+      }
+
+      setSearchResults(filtered);
       setHasSearched(true);
     } catch (error) {
       console.error('Error searching trains:', error);
@@ -94,6 +130,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
       maxTime: undefined,
       acOnly: false,
       nonAcOnly: false,
+      shortestTime: false,
     });
     setSearchResults([]);
     setHasSearched(false);
@@ -185,6 +222,78 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
         </div>
       </div>
 
+      {showFilters && (
+        <div className="bg-white rounded-lg p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Min Fare</label>
+              <input
+                type="number"
+                value={filters.minFare ?? ''}
+                onChange={(e) => setFilters({ ...filters, minFare: e.target.value ? Number(e.target.value) : undefined })}
+                className="w-full mt-1 p-2 border rounded"
+                min={0}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Max Fare</label>
+              <input
+                type="number"
+                value={filters.maxFare ?? ''}
+                onChange={(e) => setFilters({ ...filters, maxFare: e.target.value ? Number(e.target.value) : undefined })}
+                className="w-full mt-1 p-2 border rounded"
+                min={0}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Earliest Departure</label>
+              <input
+                type="time"
+                value={filters.minTime ?? ''}
+                onChange={(e) => setFilters({ ...filters, minTime: e.target.value || undefined })}
+                className="w-full mt-1 p-2 border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Latest Departure</label>
+              <input
+                type="time"
+                value={filters.maxTime ?? ''}
+                onChange={(e) => setFilters({ ...filters, maxTime: e.target.value || undefined })}
+                className="w-full mt-1 p-2 border rounded"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6 mt-4 flex-wrap">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={filters.acOnly || false}
+                onChange={(e) => setFilters({ ...filters, acOnly: e.target.checked, nonAcOnly: false })}
+              />
+              <span className="text-sm">AC Only</span>
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={filters.nonAcOnly || false}
+                onChange={(e) => setFilters({ ...filters, nonAcOnly: e.target.checked, acOnly: false })}
+              />
+              <span className="text-sm">Non-AC Only</span>
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={filters.shortestTime || false}
+                onChange={(e) => setFilters({ ...filters, shortestTime: e.target.checked })}
+              />
+              <span className="text-sm">Shortest Travel Time</span>
+            </label>
+          </div>
+        </div>
+      )}
+
       {hasSearched && (
         <div>
           <div className="flex justify-between items-center mb-6">
@@ -252,7 +361,7 @@ export const SearchTrains = ({ onBookTrain }: SearchTrainsProps) => {
                     </div>
                   </div>
 
-                  {/* NEW: Seat Availability Breakdown */}
+                  {/* Seat Availability Breakdown */}
                   <div className="mb-4 p-4 bg-gray-50 rounded-lg">
                     <div className="flex items-center gap-2 mb-3">
                       <Users className="w-4 h-4 text-gray-600" />

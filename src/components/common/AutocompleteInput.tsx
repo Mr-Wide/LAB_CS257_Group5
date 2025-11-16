@@ -49,8 +49,9 @@ export const AutocompleteInput = ({
           .slice(0, 10)
           .map((station_name) => ({ station_name }));
         setOptions(matched as Station[]);
-      } catch (err: any) {
-        setError(err?.message || 'Failed to search stations');
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to search stations';
+        setError(errorMessage);
         setOptions([]);
       } finally {
         setLoading(false);

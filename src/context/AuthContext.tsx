@@ -10,6 +10,7 @@ interface AuthContextType {
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
+// Context
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const useAuth = () => {
@@ -42,87 +43,61 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     init();
   }, []);
 
+  // LOGIN
   const login = async (email: string, password: string) => {
     try {
-      console.log('AuthContext: Calling backend login API...');
-      
       const response = await fetch('/api/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
 
-      console.log('📡 AuthContext: Response status:', response.status);
-
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('AuthContext: Login failed:', errorData);
         throw new Error(errorData.error || 'Login failed');
       }
 
       const data = await response.json();
-      console.log('AuthContext: Login successful:', data);
-      
-      // Convert your backend user format to frontend User type
       const frontendUser: User = {
         id: data.user.Username,
-        username: data.user.Username, // Map to username property
+        username: data.user.Username,
         email: data.user.useremail[0]?.Email || email,
         fullName: `${data.user.First_name} ${data.user.Last_name}`,
         phone: data.user.userphone[0]?.Mobile_no || '',
         isAdmin: false,
       };
 
-      // Store in localStorage for persistence
       localStorage.setItem('current_user', JSON.stringify(frontendUser));
       setUser(frontendUser);
-
     } catch (error) {
       console.error('AuthContext: Login error:', error);
       throw error;
     }
   };
 
+  // REGISTER
   const register = async (email: string, password: string, fullName: string, phone?: string) => {
     try {
-      console.log('AuthContext: Calling backend register API...');
-      
       // Split fullName into first and last name
       const nameParts = fullName.trim().split(' ');
       const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || 'Unknown';
-      
+      const lastName = nameParts.slice(1).join(' ') || '';
+
       const response = await fetch('/api/register', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email,
-          password,
-          firstName,
-          lastName,
-          phone,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, firstName, lastName, phone }),
       });
-
-      console.log('AuthContext: Register response status:', response.status);
 
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('AuthContext: Registration failed:', errorData);
         throw new Error(errorData.error || 'Registration failed');
       }
 
       const data = await response.json();
-      console.log('AuthContext: Registration successful:', data);
-      
-      // Auto-login after registration
       const frontendUser: User = {
         id: data.user.Username,
-        username: data.user.Username, // Map to username property
+        username: data.user.Username,
         email: data.user.useremail[0]?.Email || email,
         fullName: `${data.user.First_name} ${data.user.Last_name}`,
         phone: data.user.userphone[0]?.Mobile_no || phone || '',
@@ -131,81 +106,74 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       localStorage.setItem('current_user', JSON.stringify(frontendUser));
       setUser(frontendUser);
-
     } catch (error) {
       console.error('AuthContext: Registration error:', error);
       throw error;
     }
   };
 
+  // LOGOUT
   const logout = () => {
     localStorage.removeItem('current_user');
     setUser(null);
   };
 
-  const updateProfile = async (updates: Partial<User>) => {
-    if (!user) throw new Error('Not logged in');
-
-    try {
-      console.log('AuthContext: Calling backend update profile API...');
-      
-      const response = await fetch('/api/update-profile', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: user.id,
-          username: user.username, // Include username in the request
-          ...updates
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to update profile');
-      }
-
-      const data = await response.json();
-      console.log('AuthContext: Profile update successful:', data);
-      
-      // Update the user in state and localStorage
-      const updatedUser: User = {
-        ...user,
+  // UPDATE PROFILE
+const updateProfile = async (updates: Partial<User>) => {
+  if (!user) throw new Error('Not logged in');
+  try {
+    const response = await fetch('/api/profile', {   // Changed endpoint from /api/update-profile to /api/profile
+      method: 'PUT',                                // Confirm method is PUT!
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: user.id,
+        username: user.username,
         ...updates,
-        // If your backend returns the updated user, use that data
-        id: data.user?.Username || user.id,
-        username: data.user?.Username || user.username, // Ensure username is included
-        email: data.user?.useremail?.[0]?.Email || user.email,
-        fullName: data.user ? `${data.user.First_name} ${data.user.Last_name}` : user.fullName,
-        phone: data.user?.userphone?.[0]?.Mobile_no || user.phone,
-      };
+      }),
+    });
 
-      localStorage.setItem('current_user', JSON.stringify(updatedUser));
-      setUser(updatedUser);
-
-    } catch (error) {
-      console.error('AuthContext: Profile update error:', error);
-      throw error;
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to update profile');
     }
-  };
 
+    const data = await response.json();
+    const updatedUser: User = {
+      ...user,
+      ...updates,
+      id: data.user?.Username || user.id,
+      username: data.user?.Username || user.username,
+      email: data.user?.useremail?.[0]?.Email || user.email,
+      fullName: data.user ? `${data.user.First_name} ${data.user.Last_name}` : user.fullName,
+      phone: data.user?.userphone?.[0]?.Mobile_no || user.phone,
+    };
+
+    localStorage.setItem('current_user', JSON.stringify(updatedUser));
+    setUser(updatedUser);
+  } catch (error) {
+    console.error('AuthContext: Profile update error:', error);
+    throw error;
+  }
+};
+
+
+  // CHANGE PASSWORD
   const changePassword = async (currentPassword: string, newPassword: string) => {
     if (!user) throw new Error('Not logged in');
-
     const response = await fetch('/api/change-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId: user.id,
-        username: user.username, // Include username in the request
+        username: user.username,
         currentPassword,
-        newPassword
-      })
+        newPassword,
+      }),
     });
 
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Failed to change password');
+    // No user update needed here
   };
 
   return (

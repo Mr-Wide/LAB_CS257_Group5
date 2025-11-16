@@ -11,6 +11,7 @@ import { BookingModal } from './components/user/BookingModal';
 import { Train, BookingCreateInput } from './types';
 import { BookingsProvider, useBookings } from './context/BookingsContext';
 import { useHashRouter } from './hooks/useHashRouter';
+import Home from './pages/Home';
 
 function AppContent() {
   const { user } = useAuth();
@@ -76,12 +77,14 @@ function AppContent() {
   
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar onNavigate={navigate} currentPage={route} />
+      <Navbar onNavigate={navigate as (page: string) => void} currentPage={route} />
 
-      {user.isAdmin ? (
+            {user.isAdmin ? (
         <AdminDashboard />
       ) : (
         <>
+          {route === 'home' && <Home />}
+          {route === '' && <Home />}
           {route === 'dashboard' && <SearchTrains onBookTrain={handleBookTrain} />} 
           {route === 'bookings' && <MyBookings />} 
           {route === 'profile' && <Profile />}
