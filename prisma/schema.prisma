@@ -110,14 +110,15 @@ model ticket {
 }
 
 model train {
-  Train_no   Int        @id
-  Train_name String     @db.VarChar(100)
-  Route_ID   Int?
-  coach      coach[]
-  goesto     goesto[]
-  schedule   schedule[]
-  ticket     ticket[]
-  route      route?     @relation(fields: [Route_ID], references: [Route_ID], onDelete: Cascade, onUpdate: NoAction, map: "train_ibfk_1")
+  Train_no     Int            @id
+  Train_name   String         @db.VarChar(100)
+  Route_ID     Int?
+  coach        coach[]
+  goesto       goesto[]
+  schedule     schedule[]
+  ticket       ticket[]
+  route        route?         @relation(fields: [Route_ID], references: [Route_ID], onDelete: Cascade, onUpdate: NoAction, map: "train_ibfk_1")
+  waiting_list waiting_list[]
 
   @@index([Route_ID], map: "Route_ID")
 }
@@ -150,17 +151,16 @@ model userphone {
   @@id([Username, Mobile_no])
 }
 
-
 model waiting_list {
-  Waiting_List_ID Int     @id @default(autoincrement())
-  PNR_No          String? @db.VarChar(20)
-  Username        String? @db.VarChar(50)
+  Waiting_List_ID Int       @id
+  PNR_No          String?   @db.VarChar(20)
+  Username        String?   @db.VarChar(50)
   Train_no        Int?
-  Coach_class     String? @db.VarChar(50)
-  Seat_count      Int     @default(0)
+  Coach_class     String?   @db.VarChar(50)
+  Seat_count      Int?      @default(0)
   Travel_Date     DateTime? @db.Date
-
-  ticket          ticket? @relation(fields: [PNR_No], references: [PNR_No], onDelete: Cascade, map: "waiting_list_ibfk_1")
+  ticket          ticket?   @relation(fields: [PNR_No], references: [PNR_No], onDelete: Cascade, onUpdate: NoAction, map: "waiting_list_ibfk_1")
+  train           train?    @relation(fields: [Train_no], references: [Train_no], onDelete: NoAction, onUpdate: NoAction, map: "waiting_list_ibfk_2")
 
   @@index([PNR_No], map: "PNR_No")
   @@index([Train_no, Coach_class], map: "train_coach_idx")
